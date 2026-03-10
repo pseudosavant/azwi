@@ -2,16 +2,36 @@
 
 `azwi` fetches Azure DevOps work item context for agentic coding tools such as Codex CLI and Claude Code.
 
-The tool is designed to make Azure DevOps work items easy to pull into an agent session as deterministic Markdown or JSON.
+The tool is designed for deterministic, machine-friendly Markdown or JSON output with clean stdout on success and stderr-only logging.
 
-## Status
+## Install and run
 
-This repo is the planned home of `azwi`.
+Local checkout:
 
-The intended distribution targets are:
+```text
+uv run ./azwi.py --help
+uv run ./azwi.py 2195 --org my-org
+```
 
-- `uv run ./azwi.py ...` via PEP 723 inline script metadata
-- `uvx azwi ...` via a published PyPI package
+Packaged command:
+
+```text
+uvx azwi --help
+azwi 2195 --org my-org
+```
+
+## Authentication
+
+`azwi` reads an Azure DevOps PAT from:
+
+- `AZWI_PAT`
+
+Required PAT scopes:
+
+- Work Items: Read
+- Code: Read
+
+The PAT is not stored in `~/.azwi/config.toml`.
 
 ## Primary usage
 
@@ -28,50 +48,64 @@ azwi 2195 --section metadata --section comments --comment-limit 20
 azwi 2195 --format json
 azwi 2195 --output wi-2195.md
 azwi 2195 --output wi-2195.md --download-images assets
+azwi 2195 --field-acceptance Custom.Acceptance
+azwi 2195 --extra-field Custom.DevNotes
 azwi fields --type Bug --project Payments
+azwi config show
 ```
 
-## What it returns
+## Commands
 
-By default, `azwi` includes all major work item sections:
+Fetch a work item:
+
+```text
+azwi <work_item_id> [options]
+```
+
+List fields for a work item type:
+
+```text
+azwi fields --type Bug [--project PROJECT] [--org ORG]
+```
+
+Manage config:
+
+```text
+azwi config show
+azwi config set-defaults --org my-org --project Payments
+azwi config set-field --global --acceptance Microsoft.VSTS.Common.AcceptanceCriteria
+azwi config set-field --project Payments --description Custom.DevDescription
+azwi config add-extra-field --project Payments Custom.ReleaseNotes
+```
+
+## Output
+
+Default sections:
 
 - metadata
 - description
-- acceptance criteria
+- acceptance
 - comments
-- linked PRs
+- prs
 
-Output formats:
+Formats:
 
-- `markdown` for prompt-friendly agent context
-- `json` for structured automation
+- `markdown`
+- `json`
 
-## Authentication
-
-`azwi` reads an Azure DevOps PAT from:
-
-- `AZWI_PAT`
-
-Required PAT scopes:
-
-- Work Items: Read
-- Code: Read
-
-The PAT is not stored in `~/.azwi/config.toml`.
+Markdown keeps the core section layout from the spec. JSON includes stable top-level `work_item` metadata plus a `sections` object containing rendered Markdown text and source field reference names for text fields.
 
 ## Configuration
 
-`azwi` uses a user config file for non-secret defaults:
+`azwi` uses `~/.azwi/config.toml` for non-secret defaults and field mappings.
 
-- `~/.azwi/config.toml`
+Supported config layers:
 
-The config can hold:
-
-- default org
-- optional default project
-- global field mappings
-- project-specific field overrides
-- optional org-specific overrides for multi-org setups
+- top-level defaults
+- top-level project overrides
+- org-specific defaults
+- org-specific project overrides
+- per-invocation CLI overrides
 
 Example:
 
@@ -83,6 +117,8 @@ project = "ProjectA"
 [defaults.fields]
 description = "System.Description"
 acceptance = "Microsoft.VSTS.Common.AcceptanceCriteria"
+repro_steps = "Microsoft.VSTS.TCM.ReproSteps"
+system_info = "Microsoft.VSTS.TCM.SystemInfo"
 
 [projects."ProjectB".fields]
 acceptance = "Custom.AcceptanceNotes"
@@ -90,35 +126,38 @@ extra_fields = ["Custom.ReleaseNotes"]
 
 [orgs."other-org".defaults]
 project = "ProjectX"
+
+[orgs."other-org".defaults.fields]
+acceptance = "Custom.Acceptance"
 ```
 
-Planned config commands:
+`azwi config show` renders the effective resolved config. PATs are never written to the config file.
+
+## Image download behavior
+
+Use `--download-images DIR` together with `--output` to download remote Markdown image URLs and rewrite them to local relative paths.
+
+Relative `DIR` paths resolve from the current working directory, not from the output file location.
+
+## Packaging and publishing
+
+This repo supports both:
+
+- `uv run ./azwi.py ...` via the PEP 723 metadata block in the root wrapper
+- `uvx azwi ...` via the package defined in `pyproject.toml`
+
+Build:
 
 ```text
-azwi config show
-azwi config set-defaults --org my-org --project ProjectA
-azwi config set-field --global --acceptance Microsoft.VSTS.Common.AcceptanceCriteria
-azwi config set-field --project ProjectB --acceptance Custom.AcceptanceNotes
-azwi config add-extra-field --project ProjectB Custom.ReleaseNotes
+uv build --no-sources
 ```
 
-`azwi config show` is intended to show the effective resolved config.
+Release workflow:
 
-## Design goals
-
-- agent-first CLI and help output
-- deterministic stdout
-- stderr-only logging
-- org-scoped work item lookup
-- project-specific follow-up behavior derived from the fetched work item
-- explicit image download behavior via `--download-images DIR`
-- relative `--download-images` paths resolved from the current working directory
+- tag a release such as `v0.9.0`
+- GitHub Actions builds the package
+- publish to PyPI using Trusted Publishing
 
 ## License
 
 MIT
-
-## Repository files
-
-- `spec.md`: implementation spec
-- `README.md`: high-level project overview
