@@ -136,7 +136,7 @@ class CliTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         exit_code = run_cli(
-            ["2195", "--section", "comments", "--comment-limit", "20"],
+            ["2195", "--format", "markdown", "--section", "comments", "--comment-limit", "20"],
             stdout=stdout,
             stderr=stderr,
             env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
@@ -151,13 +151,32 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertIn(("get_comments", "Payments", 2195, 20), FakeClient.instances[-1].calls)
 
+    def test_default_fetch_output_is_json(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = run_cli(
+            ["2195"],
+            stdout=stdout,
+            stderr=stderr,
+            env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
+            config_path=None,
+            client_factory=FakeClient,
+            program="azwi",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn('"work_item"', stdout.getvalue())
+        self.assertIn('"sections"', stdout.getvalue())
+        self.assertNotIn("# Metadata", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_fetch_with_output_writes_file_and_not_stdout(self) -> None:
         with workspace_dir("fetch-output") as temp_dir:
             output_path = temp_dir / "wi.md"
             stdout = io.StringIO()
             stderr = io.StringIO()
             exit_code = run_cli(
-                ["2195", "--output", str(output_path), "--force", "--section", "metadata"],
+                ["2195", "--format", "markdown", "--output", str(output_path), "--force", "--section", "metadata"],
                 stdout=stdout,
                 stderr=stderr,
                 env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},

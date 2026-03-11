@@ -422,7 +422,7 @@ Rationale:
 
 Behavior:
 
-1. Without `--output`, write Markdown to stdout only.
+1. Without `--output`, write the selected output format to stdout only.
 2. With `--output`, write UTF-8 with `\n` line endings.
 3. Existing files are not overwritten without `--force`.
 
@@ -470,7 +470,7 @@ Recommended semantics:
 Requirements:
 
 1. Logs go to stderr only.
-2. Success path must never emit non-markdown content on stdout.
+2. Success path must never emit non-output content on stdout.
 3. Spinner/progress UI must not be coupled to `--verbose`.
 4. If a spinner exists, disable it automatically for non-interactive stderr.
 
@@ -557,12 +557,12 @@ V2 should support both:
 
 Default:
 
-- `markdown`
+- `json`
 
 Rationale:
 
-- Markdown is the best default for dropping work item context directly into an agent prompt.
-- JSON is the easiest and most efficient format for an agent that wants to inspect specific fields programmatically.
+- JSON is the best default when `azwi` is called directly by agent tooling and consumed programmatically.
+- Markdown remains the best explicit render mode for dropping work item context directly into an agent prompt.
 
 ## JSON contract
 

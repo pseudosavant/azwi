@@ -45,7 +45,7 @@ Examples:
 azwi 2195
 azwi 2195 --section acceptance
 azwi 2195 --section metadata --section comments --comment-limit 20
-azwi 2195 --format json
+azwi 2195 --format markdown
 azwi 2195 --output wi-2195.md
 azwi 2195 --output wi-2195.md --download-images assets
 azwi 2195 --field-acceptance Custom.Acceptance
@@ -90,10 +90,14 @@ Default sections:
 
 Formats:
 
+- `json`
 - `markdown`
+
+Default format:
+
 - `json`
 
-Markdown keeps the core section layout from the spec. JSON includes stable top-level `work_item` metadata plus a `sections` object containing rendered Markdown text and source field reference names for text fields.
+JSON includes stable top-level `work_item` metadata plus a `sections` object containing rendered Markdown text and source field reference names for text fields. Markdown remains available as an explicit render mode for prompt-friendly output.
 
 ## Configuration
 
@@ -154,7 +158,7 @@ uv build --no-sources
 
 Release workflow:
 
-- tag a release such as `v0.9.0`
+- tag a release such as `v0.9.1`
 - GitHub Actions builds the package
 - publish to PyPI using Trusted Publishing
 

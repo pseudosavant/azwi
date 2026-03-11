@@ -128,7 +128,7 @@ def build_root_help(program: str) -> str:
         f"Examples:\n"
         f"  {program} 2195\n"
         f"  {program} 2195 --section metadata --section comments\n"
-        f"  {program} 2195 --format json\n"
+        f"  {program} 2195 --format markdown\n"
         f"  {program} fields --type Bug --project Payments\n"
         f"  {program} config show\n"
     )
@@ -327,7 +327,7 @@ def _build_fetch_parser(program: str) -> argparse.ArgumentParser:
     )
     parser.add_argument("--comment-limit", type=_comment_limit, default=10, help="max comments when comments are requested")
     parser.add_argument("--pr-status", choices=["active", "all"], default="active", help="linked PR status filter")
-    parser.add_argument("--format", choices=["markdown", "json"], default="markdown", help="output format")
+    parser.add_argument("--format", choices=["markdown", "json"], default="json", help="output format")
     parser.add_argument("--output", help="write output to PATH instead of stdout")
     parser.add_argument("--force", action="store_true", help="overwrite --output target if it exists")
     parser.add_argument("--download-images", metavar="DIR", help="download remote markdown images into DIR")
