@@ -158,7 +158,7 @@ uv build --no-sources
 
 Release workflow:
 
-- tag a release such as `v0.9.1`
+- tag a release such as `v0.9.2`
 - GitHub Actions builds the package
 - publish to PyPI using Trusted Publishing
 

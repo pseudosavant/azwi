@@ -44,6 +44,29 @@ class CompactHelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawT
     pass
 
 
+class ProgressReporter:
+    def __init__(self, stderr, *, enabled: bool) -> None:
+        self.stderr = stderr
+        self.enabled = enabled
+        self._last_len = 0
+
+    def update(self, message: str) -> None:
+        if not self.enabled or self.stderr is None:
+            return
+        text = f"\r{message}"
+        pad = max(0, self._last_len - len(text))
+        self.stderr.write(text + (" " * pad))
+        self.stderr.flush()
+        self._last_len = len(text)
+
+    def clear(self) -> None:
+        if not self.enabled or self.stderr is None:
+            return
+        self.stderr.write("\r" + (" " * self._last_len) + "\r")
+        self.stderr.flush()
+        self._last_len = 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return run_cli(
         sys.argv[1:] if argv is None else argv,
@@ -159,58 +182,69 @@ def _run_fetch(
         raise ConfigError("Organization is required. Use --org, config defaults, or AZWI_ORG.")
 
     client = client_factory(initial_config.org, env.get("AZWI_PAT", ""), verbose=namespace.verbose, stderr=stderr)
-    work_item = client.get_work_item(namespace.work_item_id)
-    actual_project = work_item.get("fields", {}).get("System.TeamProject")
-    resolved = resolve_config(
-        raw_config,
-        env=env,
-        cli_org=namespace.org,
-        resolved_project=str(actual_project) if actual_project else None,
-        cli_field_overrides={
-            "description": namespace.field_description,
-            "acceptance": namespace.field_acceptance,
-            "repro_steps": namespace.field_repro_steps,
-            "system_info": namespace.field_system_info,
-        },
-        cli_extra_fields=namespace.extra_field or [],
-    )
-    if not resolved.project:
-        raise ConfigError("Fetched work item is missing System.TeamProject.")
-
-    comments_payload = None
-    if "comments" in selected_sections:
-        comments_payload = client.get_comments(resolved.project, namespace.work_item_id, namespace.comment_limit)
-
-    pull_request_payloads: list[dict[str, Any]] = []
-    if "prs" in selected_sections:
-        pull_request_refs = extract_pull_request_refs(work_item.get("relations"))
-        for repo_id, pr_id in pull_request_refs:
-            pull_request_payloads.append(client.get_pull_request(resolved.project, repo_id, pr_id))
-        pull_request_payloads = filter_pull_requests(pull_request_payloads, status=namespace.pr_status)
-
-    rendered = build_rendered_work_item(
-        work_item,
-        comments_payload=comments_payload,
-        pull_request_payloads=pull_request_payloads,
-        fields=resolved.fields,
-        extra_fields=resolved.extra_fields,
-        selected_sections=selected_sections,
-    )
-    if namespace.download_images and output_path is not None:
-        rendered = localize_markdown_images(
-            rendered,
-            output_path=output_path,
-            download_dir=namespace.download_images,
-            downloader=client.download,
+    progress = ProgressReporter(stderr, enabled=_should_show_progress(stderr=stderr, verbose=namespace.verbose))
+    try:
+        progress.update(f"Fetching work item {namespace.work_item_id}")
+        work_item = client.get_work_item(namespace.work_item_id)
+        actual_project = work_item.get("fields", {}).get("System.TeamProject")
+        resolved = resolve_config(
+            raw_config,
+            env=env,
+            cli_org=namespace.org,
+            resolved_project=str(actual_project) if actual_project else None,
+            cli_field_overrides={
+                "description": namespace.field_description,
+                "acceptance": namespace.field_acceptance,
+                "repro_steps": namespace.field_repro_steps,
+                "system_info": namespace.field_system_info,
+            },
+            cli_extra_fields=namespace.extra_field or [],
         )
+        if not resolved.project:
+            raise ConfigError("Fetched work item is missing System.TeamProject.")
 
-    serialized = render_markdown(rendered) if namespace.format == "markdown" else render_json(rendered)
-    if output_path is None:
-        stdout.write(serialized)
+        comments_payload = None
+        if "comments" in selected_sections:
+            progress.update(f"Fetching comments for {namespace.work_item_id}")
+            comments_payload = client.get_comments(resolved.project, namespace.work_item_id, namespace.comment_limit)
+
+        pull_request_payloads: list[dict[str, Any]] = []
+        if "prs" in selected_sections:
+            pull_request_refs = extract_pull_request_refs(work_item.get("relations"))
+            total_pull_requests = len(pull_request_refs)
+            for index, (repo_id, pr_id) in enumerate(pull_request_refs, start=1):
+                progress.update(f"Fetching linked PRs ({index}/{total_pull_requests})")
+                pull_request_payloads.append(client.get_pull_request(resolved.project, repo_id, pr_id))
+            pull_request_payloads = filter_pull_requests(pull_request_payloads, status=namespace.pr_status)
+
+        rendered = build_rendered_work_item(
+            work_item,
+            comments_payload=comments_payload,
+            pull_request_payloads=pull_request_payloads,
+            fields=resolved.fields,
+            extra_fields=resolved.extra_fields,
+            selected_sections=selected_sections,
+        )
+        if namespace.download_images and output_path is not None:
+            progress.update("Downloading and rewriting images")
+            rendered = localize_markdown_images(
+                rendered,
+                output_path=output_path,
+                download_dir=namespace.download_images,
+                downloader=client.download,
+            )
+
+        progress.update("Rendering output")
+        serialized = render_markdown(rendered) if namespace.format == "markdown" else render_json(rendered)
+        progress.clear()
+        if output_path is None:
+            stdout.write(serialized)
+            return 0
+
+        output_path.write_text(serialized, encoding="utf-8", newline="\n")
         return 0
-
-    output_path.write_text(serialized, encoding="utf-8", newline="\n")
-    return 0
+    finally:
+        progress.clear()
 
 
 def _run_fields(
@@ -395,3 +429,10 @@ def _comment_limit(value: str) -> int:
     if parsed < 1 or parsed > 50:
         raise argparse.ArgumentTypeError("comment limit must be between 1 and 50")
     return parsed
+
+
+def _should_show_progress(*, stderr, verbose: bool) -> bool:
+    if verbose or stderr is None:
+        return False
+    isatty = getattr(stderr, "isatty", None)
+    return bool(callable(isatty) and isatty())

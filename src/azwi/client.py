@@ -129,7 +129,7 @@ class AzureDevOpsClient:
     def _headers(self, *, allow_auth: bool, accept: str) -> dict[str, str]:
         headers = {
             "Accept": accept,
-            "User-Agent": "azwi/0.9.1",
+            "User-Agent": "azwi/0.9.2",
         }
         if allow_auth:
             token = base64.b64encode(f":{self.pat}".encode("utf-8")).decode("ascii")

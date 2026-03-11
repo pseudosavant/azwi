@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "azwi"
-version = "0.9.1"
+version = "0.9.2"
 description = "Azure DevOps work item fetcher for agentic coding tools"
 readme = "README.md"
 requires-python = ">=3.11"

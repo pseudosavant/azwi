@@ -103,6 +103,11 @@ class FakeClient:
         return b"image-data", "image/png"
 
 
+class TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 class CliTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeClient.instances.clear()
@@ -169,6 +174,24 @@ class CliTests(unittest.TestCase):
         self.assertIn('"sections"', stdout.getvalue())
         self.assertNotIn("# Metadata", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_interactive_fetch_shows_progress_on_stderr(self) -> None:
+        stdout = io.StringIO()
+        stderr = TtyStringIO()
+        exit_code = run_cli(
+            ["2195"],
+            stdout=stdout,
+            stderr=stderr,
+            env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
+            config_path=None,
+            client_factory=FakeClient,
+            program="azwi",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Fetching work item 2195", stderr.getvalue())
+        self.assertIn("Rendering output", stderr.getvalue())
+        self.assertIn('"work_item"', stdout.getvalue())
 
     def test_fetch_with_output_writes_file_and_not_stdout(self) -> None:
         with workspace_dir("fetch-output") as temp_dir:
