@@ -118,6 +118,7 @@ class CliTests(unittest.TestCase):
         exit_code = run_cli([], stdout=stdout, stderr=stderr, env={}, config_path=None, client_factory=FakeClient, program="azwi")
         self.assertEqual(exit_code, 0)
         self.assertIn("azwi <work_item_id> [options]", stdout.getvalue())
+        self.assertIn("Usually the only argument you need is the work item ID.", stdout.getvalue())
         self.assertNotIn("--repo", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
@@ -134,7 +135,8 @@ class CliTests(unittest.TestCase):
                 program="azwi",
             )
         self.assertEqual(exit_code, 0)
-        self.assertIn("--field-acceptance", stdout.getvalue())
+        self.assertIn("Usually the only required argument is the work item ID.", stdout.getvalue())
+        self.assertIn("--field-acceptance REFNAME", stdout.getvalue())
         self.assertNotIn("--project", stdout.getvalue())
 
     def test_fetch_selected_sections_and_stdout_stderr_behavior(self) -> None:

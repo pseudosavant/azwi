@@ -136,24 +136,88 @@ def build_root_help(program: str) -> str:
     exit_lines = "\n".join(f"  {code}  {label}" for code, label in EXIT_CODES.items())
     return (
         f"Usage:\n"
-        f"  {program} <work_item_id> [options]\n"
-        f"  {program} fields --type TYPE [--project PROJECT] [--org ORG]\n"
-        f"  {program} config <subcommand>\n"
-        f"  {program} version\n\n"
+        f"  {program} <work_item_id> [options]\n\n"
+        f"azwi - Fetch Azure DevOps work item context for coding agents.\n\n"
+        f"Happy path:\n"
+        f"  {program} <work_item_id>\n"
+        f"  Usually the only argument you need is the work item ID.\n"
+        f"  Add --org only when no default organization is configured.\n\n"
+        f"Commands:\n"
+        f"  {program} <work_item_id>                 Fetch one work item\n"
+        f"  {program} fields --type TYPE             List field reference names for a work item type\n"
+        f"  {program} config show                    Show resolved config\n"
+        f"  {program} config set-defaults ...        Set defaults in ~/.azwi/config.toml\n"
+        f"  {program} version                        Print version and exit\n\n"
+        f"Common fetch options:\n"
+        f"  --org ORG                     Override organization\n"
+        f"  --format {{json,markdown}}      Output format (default: json)\n"
+        f"  --section NAME                Repeatable section selector\n"
+        f"  --output PATH                 Write to file instead of stdout\n"
+        f"  --download-images DIR         Requires --output\n\n"
         f"Env:\n"
         f"  AZWI_PAT      Azure DevOps personal access token\n"
         f"  AZWI_ORG      Default organization for fetch and fields\n"
         f"  AZWI_PROJECT  Default project for fields\n\n"
         f"Sections:\n"
         f"  metadata, description, acceptance, comments, prs\n\n"
+        f"Config:\n"
+        f"  ~/.azwi/config.toml stores non-secret defaults and field mappings.\n\n"
         f"Exit codes:\n"
         f"{exit_lines}\n\n"
         f"Examples:\n"
         f"  {program} 2195\n"
+        f"  {program} 2195 --org my-org\n"
         f"  {program} 2195 --section metadata --section comments\n"
         f"  {program} 2195 --format markdown\n"
         f"  {program} fields --type Bug --project Payments\n"
         f"  {program} config show\n"
+    )
+
+
+def build_fetch_help(program: str) -> str:
+    exit_lines = "\n".join(f"  {code}  {label}" for code, label in EXIT_CODES.items())
+    return (
+        f"Usage:\n"
+        f"  {program} <work_item_id> [options]\n\n"
+        f"azwi - Fetch one Azure DevOps work item.\n\n"
+        f"Happy path:\n"
+        f"  {program} <work_item_id>\n"
+        f"  Usually the only required argument is the work item ID.\n"
+        f"  Add --org only when it is not already available from config or AZWI_ORG.\n\n"
+        f"Required:\n"
+        f"  <work_item_id>                Organization-scoped work item ID\n\n"
+        f"Selection:\n"
+        f"  --section NAME                Repeatable section selector\n"
+        f"  --comment-limit N             1..50; used when comments are requested (default: 10)\n"
+        f"  --pr-status {{active,all}}      Linked PR filter (default: active)\n\n"
+        f"Output:\n"
+        f"  --format {{json,markdown}}      Output format (default: json)\n"
+        f"  --output PATH                 Write to file instead of stdout\n"
+        f"  --force                       Overwrite --output target if it exists\n"
+        f"  --download-images DIR         Download remote markdown images into DIR; requires --output\n\n"
+        f"Field overrides:\n"
+        f"  --field-description REFNAME\n"
+        f"  --field-acceptance REFNAME\n"
+        f"  --field-repro-steps REFNAME\n"
+        f"  --field-system-info REFNAME\n"
+        f"  --extra-field REFNAME         Repeatable additional field\n\n"
+        f"Targeting:\n"
+        f"  --org ORG                     Override organization for this fetch\n"
+        f"  Project is resolved from the fetched work item's System.TeamProject field.\n\n"
+        f"Sections:\n"
+        f"  metadata, description, acceptance, comments, prs\n\n"
+        f"Env:\n"
+        f"  AZWI_PAT      Azure DevOps personal access token\n"
+        f"  AZWI_ORG      Default organization for fetch\n"
+        f"  AZWI_PROJECT  Ignored by direct work item fetch\n\n"
+        f"Exit codes:\n"
+        f"{exit_lines}\n\n"
+        f"Examples:\n"
+        f"  {program} 2195\n"
+        f"  {program} 2195 --org my-org\n"
+        f"  {program} 2195 --format markdown\n"
+        f"  {program} 2195 --section metadata --section comments --comment-limit 20\n"
+        f"  {program} 2195 --output wi-2195.md --download-images assets\n"
     )
 
 
@@ -167,6 +231,9 @@ def _run_fetch(
     client_factory,
     program: str,
 ) -> int:
+    if any(arg in {"-h", "--help"} for arg in argv):
+        stdout.write(build_fetch_help(program))
+        return 0
     parser = _build_fetch_parser(program)
     namespace = parser.parse_args(list(argv))
     selected_sections = normalize_sections(namespace.section)
