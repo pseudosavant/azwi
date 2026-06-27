@@ -367,6 +367,7 @@ Allowed values:
 - `description`
 - `acceptance`
 - `comments`
+- `attachments`
 - `prs`
 
 Behavior:
@@ -415,6 +416,28 @@ Rationale:
 
 - the option should read like a filter, not like a section toggle
 
+### PR thread comments
+
+- `--include-pr-comments`
+- `--pr-comment-status {active,all}`
+- `--include-pr-system-comments`
+
+Behavior:
+
+1. Linked PR metadata is fetched when the `prs` section is requested.
+2. PR thread comments are not fetched by default.
+3. `--include-pr-comments` fetches Azure DevOps PR thread comments and nests them under each linked PR.
+4. `--include-pr-comments` automatically includes the `prs` section if the caller did not request it.
+5. `--pr-comment-status` defaults to `active`.
+6. `active` includes only Azure DevOps PR threads whose thread status is `active`.
+7. `all` includes active and resolved PR threads, excluding deleted comments.
+8. System comments are excluded unless `--include-pr-system-comments` is set.
+
+Rationale:
+
+- PR review discussion can be high-volume, so it must remain opt-in.
+- The filter uses Azure DevOps' own `active` terminology instead of inventing a separate unresolved/resolved vocabulary.
+
 ### Output
 
 - `--output PATH`
@@ -446,6 +469,28 @@ Rationale:
 
 - a single explicit option is easiest for an agent to discover from `--help`
 - agents do better with one obvious parameter than with coupled boolean-plus-path flags
+
+### Attachment downloads
+
+- `--download-attachments DIR`
+- `--attachment-name NAME`
+- `--attachment-url URL`
+
+Behavior:
+
+1. The `attachments` section lists work item attachment metadata from `AttachedFile` relations.
+2. `--download-attachments DIR` downloads work item attachments into `DIR`.
+3. `--download-attachments DIR` automatically includes the `attachments` section if the caller did not request it.
+4. Relative `DIR` values must be resolved against the current working directory.
+5. When `--output` is used, rendered local attachment paths are relative to the output file location.
+6. Without `--output`, rendered local attachment paths are relative to the current working directory when possible.
+7. Attachment downloads are explicit side effects and must not happen merely because the `attachments` section is requested.
+8. Without attachment selectors, `--download-attachments DIR` downloads all work item attachments.
+9. `--attachment-name NAME` and `--attachment-url URL` are repeatable exact-match filters.
+10. Attachment selectors apply to both attachment metadata output and attachment downloads.
+11. Attachment selectors automatically include the `attachments` section if the caller did not request it.
+12. If any attachment selector does not match the fetched attachment metadata, fail the command instead of silently producing a partial result.
+13. The `attachments` section must include exact `name` and `url` values suitable for follow-up selector calls.
 
 ### Target selection
 
@@ -507,6 +552,7 @@ The Markdown contract can stay close to v1.
 # Description:
 # Acceptance Criteria:
 # Discussion
+# Attachments
 # PRs
 ```
 
@@ -542,6 +588,22 @@ Format:
 ```md
 - PR {prId} - {title} ({sourceBranch}) [{status}] {url}
 ```
+
+If PR comments are included, render them nested under the related PR.
+
+## Attachments section
+
+Format:
+
+```md
+- {name}
+  - URL: {url}
+  - Local Path: {localPath}
+  - Comment: {comment}
+  - Size: {size}
+```
+
+Only include local path, comment, and size lines when values are present.
 
 ## Empty data behavior
 
@@ -582,6 +644,7 @@ Recommended top-level shape:
     "description": {},
     "acceptance": {},
     "comments": [],
+    "attachments": [],
     "prs": []
   }
 }
@@ -604,7 +667,8 @@ Requirements:
 1. work item with fields and relations
 2. comments
 3. linked PR details
-4. work item type fields
+4. linked PR threads when requested
+5. work item type fields
 
 ## PAT scopes
 
@@ -747,7 +811,9 @@ The v2 implementation should include automated tests for:
 5. mention token resolution
 6. PR relation parsing
 7. image download path rewriting
-8. error classification and exit codes
+8. attachment metadata, selector filtering, and download path rendering
+9. PR thread comment filtering
+10. error classification and exit codes
 
 Use recorded fixtures or mocked HTTP responses for Azure DevOps API calls.
 
@@ -788,3 +854,7 @@ The implementation is done when all of the following are true:
 18. JSON should include rendered Markdown text plus source field reference names, not raw HTML.
 19. `azwi config show` should display the effective resolved config by default.
 20. The project license is MIT.
+21. `attachments` is a first-class section; `--download-attachments DIR` is explicit and also includes that section.
+22. PR thread comments are opt-in with `--include-pr-comments`.
+23. PR thread comments default to `--pr-comment-status active`, with `all` available for active and resolved threads.
+24. Attachment selectors are exact-match repeatable filters: `--attachment-name NAME` and `--attachment-url URL`.

@@ -48,6 +48,10 @@ azwi 2195 --section metadata --section comments --comment-limit 20
 azwi 2195 --format markdown
 azwi 2195 --output wi-2195.md
 azwi 2195 --output wi-2195.md --download-images assets
+azwi 2195 --section attachments --download-attachments wi-2195-assets
+azwi 2195 --download-attachments wi-2195-assets --attachment-url URL
+azwi 2195 --section prs --include-pr-comments
+azwi 2195 --section prs --include-pr-comments --pr-comment-status all
 azwi 2195 --field-acceptance Custom.Acceptance
 azwi 2195 --extra-field Custom.DevNotes
 azwi fields --type Bug --project Payments
@@ -86,6 +90,7 @@ Default sections:
 - description
 - acceptance
 - comments
+- attachments
 - prs
 
 Formats:
@@ -98,6 +103,33 @@ Default format:
 - `json`
 
 JSON includes stable top-level `work_item` metadata plus a `sections` object containing rendered Markdown text and source field reference names for text fields. Markdown remains available as an explicit render mode for prompt-friendly output.
+
+## Attachments
+
+The `attachments` section lists work item attachment metadata from work item relations. Use `--download-attachments DIR` to download those files. This option automatically includes the `attachments` section.
+
+Relative `DIR` paths resolve from the current working directory. When `--output` is used, rendered local paths are relative to the output file location; otherwise they are relative to the current working directory when possible.
+
+By default, `--download-attachments DIR` downloads all attachments. Use repeatable exact-match selectors to list or download only specific attachments:
+
+```text
+azwi 2195 --section attachments --attachment-name notes.txt
+azwi 2195 --download-attachments files --attachment-url https://dev.azure.com/...
+```
+
+The `attachments` section returns exact `name` and `url` values for follow-up selector calls. If any selector does not match, the command fails instead of silently producing a partial result.
+
+## PR comments
+
+The `prs` section lists linked pull requests by default. Use `--include-pr-comments` to include Azure DevOps PR thread comments under each PR. This option automatically includes the `prs` section.
+
+PR thread comments default to active threads only:
+
+```text
+azwi 2195 --section prs --include-pr-comments
+```
+
+Use `--pr-comment-status all` to include both active and resolved thread comments. System comments are excluded unless `--include-pr-system-comments` is set.
 
 ## Configuration
 
@@ -158,7 +190,7 @@ uv build --no-sources
 
 Release workflow:
 
-- tag a release such as `v0.9.2`
+- tag a release such as `v1.0.0`
 - GitHub Actions builds the package
 - publish to PyPI using Trusted Publishing
 

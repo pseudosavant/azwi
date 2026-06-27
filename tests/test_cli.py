@@ -60,6 +60,16 @@ class FakeClient:
             },
             "relations": [
                 {
+                    "rel": "AttachedFile",
+                    "url": "https://dev.azure.com/example/_apis/wit/attachments/attachment-guid?fileName=notes.txt",
+                    "attributes": {"name": "notes.txt", "comment": "Dev notes", "resourceSize": 12},
+                },
+                {
+                    "rel": "AttachedFile",
+                    "url": "https://dev.azure.com/example/_apis/wit/attachments/attachment-guid-2?fileName=trace.log",
+                    "attributes": {"name": "trace.log", "comment": "Trace", "resourceSize": 34},
+                },
+                {
                     "rel": "ArtifactLink",
                     "url": "vstfs:///Git/PullRequestId/project-guid%2Frepo-guid%2F17",
                     "attributes": {"name": "Pull Request"},
@@ -86,7 +96,41 @@ class FakeClient:
             "title": "Fix",
             "sourceRefName": "refs/heads/fix",
             "status": "active",
+            "repository": {"id": repo_id},
             "_links": {"web": {"href": "https://dev.azure.com/example/_git/repo/pullrequest/17"}},
+        }
+
+    def get_pull_request_threads(self, project: str, repo_id: str, pr_id: int) -> dict:
+        self.calls.append(("get_pull_request_threads", project, repo_id, pr_id))
+        return {
+            "value": [
+                {
+                    "id": 101,
+                    "status": "active",
+                    "threadContext": {"filePath": "/src/app.py", "rightFileEnd": {"line": 42}},
+                    "comments": [
+                        {
+                            "publishedDate": "2026-03-10T11:00:00Z",
+                            "author": {"displayName": "Reviewer"},
+                            "content": "<p>Please handle empty values.</p>",
+                            "commentType": "text",
+                        }
+                    ],
+                },
+                {
+                    "id": 102,
+                    "status": "fixed",
+                    "threadContext": {"filePath": "/src/done.py", "rightFileEnd": {"line": 9}},
+                    "comments": [
+                        {
+                            "publishedDate": "2026-03-10T12:00:00Z",
+                            "author": {"displayName": "Reviewer"},
+                            "content": "<p>Resolved issue.</p>",
+                            "commentType": "text",
+                        }
+                    ],
+                },
+            ]
         }
 
     def get_work_item_type_fields(self, project: str, work_item_type: str) -> dict:
@@ -100,6 +144,8 @@ class FakeClient:
 
     def download(self, url: str) -> tuple[bytes, str]:
         self.calls.append(("download", url))
+        if "attachments" in url:
+            return b"attachment-data", "text/plain"
         return b"image-data", "image/png"
 
 
@@ -174,6 +220,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn('"work_item"', stdout.getvalue())
         self.assertIn('"sections"', stdout.getvalue())
+        self.assertIn('"attachments"', stdout.getvalue())
         self.assertNotIn("# Metadata", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
@@ -251,6 +298,111 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("--download-images requires --output", stderr.getvalue())
+
+    def test_download_attachments_implies_attachments_section(self) -> None:
+        with workspace_dir("attachments-output") as temp_dir:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            exit_code = run_cli(
+                ["2195", "--format", "json", "--section", "metadata", "--download-attachments", str(temp_dir / "files")],
+                stdout=stdout,
+                stderr=stderr,
+                env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
+                config_path=None,
+                client_factory=FakeClient,
+                program="azwi",
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn('"attachments"', stdout.getvalue())
+            self.assertIn('"local_path"', stdout.getvalue())
+            self.assertEqual((temp_dir / "files" / "notes.txt").read_bytes(), b"attachment-data")
+            self.assertEqual((temp_dir / "files" / "trace.log").read_bytes(), b"attachment-data")
+            self.assertIn(
+                ("download", "https://dev.azure.com/example/_apis/wit/attachments/attachment-guid?fileName=notes.txt"),
+                FakeClient.instances[-1].calls,
+            )
+
+    def test_attachment_name_filter_downloads_only_matching_attachment(self) -> None:
+        with workspace_dir("attachment-filter-output") as temp_dir:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            exit_code = run_cli(
+                [
+                    "2195",
+                    "--format",
+                    "json",
+                    "--download-attachments",
+                    str(temp_dir / "files"),
+                    "--attachment-name",
+                    "trace.log",
+                ],
+                stdout=stdout,
+                stderr=stderr,
+                env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
+                config_path=None,
+                client_factory=FakeClient,
+                program="azwi",
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn('"name": "trace.log"', stdout.getvalue())
+            self.assertNotIn('"name": "notes.txt"', stdout.getvalue())
+            self.assertFalse((temp_dir / "files" / "notes.txt").exists())
+            self.assertEqual((temp_dir / "files" / "trace.log").read_bytes(), b"attachment-data")
+
+    def test_attachment_url_filter_is_exact_and_reports_misses(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = run_cli(
+            ["2195", "--section", "attachments", "--attachment-url", "https://example.invalid/missing"],
+            stdout=stdout,
+            stderr=stderr,
+            env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
+            config_path=None,
+            client_factory=FakeClient,
+            program="azwi",
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("Attachment selector did not match: url=https://example.invalid/missing", stderr.getvalue())
+
+    def test_include_pr_comments_implies_prs_and_defaults_to_active_threads(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = run_cli(
+            ["2195", "--format", "json", "--section", "metadata", "--include-pr-comments"],
+            stdout=stdout,
+            stderr=stderr,
+            env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
+            config_path=None,
+            client_factory=FakeClient,
+            program="azwi",
+        )
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("Please handle empty values.", output)
+        self.assertNotIn("Resolved issue.", output)
+        self.assertIn(("get_pull_request_threads", "Payments", "repo-guid", 17), FakeClient.instances[-1].calls)
+
+    def test_pr_comment_status_all_includes_resolved_threads(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = run_cli(
+            ["2195", "--format", "json", "--section", "prs", "--include-pr-comments", "--pr-comment-status", "all"],
+            stdout=stdout,
+            stderr=stderr,
+            env={"AZWI_ORG": "example-org", "AZWI_PAT": "token"},
+            config_path=None,
+            client_factory=FakeClient,
+            program="azwi",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Please handle empty values.", stdout.getvalue())
+        self.assertIn("Resolved issue.", stdout.getvalue())
 
     def test_missing_pat_returns_auth_exit_code(self) -> None:
         stdout = io.StringIO()

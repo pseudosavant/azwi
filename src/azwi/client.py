@@ -53,6 +53,12 @@ class AzureDevOpsClient:
             {"api-version": "7.1-preview.1"},
         )
 
+    def get_pull_request_threads(self, project: str, repo_id: str, pr_id: int) -> dict[str, Any]:
+        return self._request_json(
+            f"/{quote(project, safe='')}/_apis/git/repositories/{quote(repo_id, safe='')}/pullRequests/{pr_id}/threads",
+            {"api-version": "7.1-preview.1"},
+        )
+
     def get_work_item_type_fields(self, project: str, work_item_type: str) -> dict[str, Any]:
         return self._request_json(
             f"/{quote(project, safe='')}/_apis/wit/workitemtypes/{quote(work_item_type, safe='')}/fields",
@@ -129,7 +135,7 @@ class AzureDevOpsClient:
     def _headers(self, *, allow_auth: bool, accept: str) -> dict[str, str]:
         headers = {
             "Accept": accept,
-            "User-Agent": "azwi/0.9.2",
+            "User-Agent": "azwi/1.0.0",
         }
         if allow_auth:
             token = base64.b64encode(f":{self.pat}".encode("utf-8")).decode("ascii")

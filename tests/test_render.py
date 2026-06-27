@@ -16,8 +16,12 @@ if str(SRC) not in sys.path:
 
 from azwi.render import (
     build_rendered_work_item,
+    download_attachments,
+    extract_attachments,
+    filter_attachments,
     extract_pull_request_refs,
     localize_markdown_images,
+    missing_attachment_selectors,
     render_json,
     render_markdown,
 )
@@ -49,6 +53,13 @@ class RenderTests(unittest.TestCase):
                 "Microsoft.VSTS.TCM.SystemInfo": "<p>Windows 11</p>",
                 "Custom.DevNotes": "<p>Internal note</p>",
             },
+            "relations": [
+                {
+                    "rel": "AttachedFile",
+                    "url": "https://dev.azure.com/example/_apis/wit/attachments/a1?fileName=notes.txt",
+                    "attributes": {"name": "notes.txt", "comment": "Implementation notes", "resourceSize": 25},
+                }
+            ],
         }
         comments_payload = {
             "comments": [
@@ -66,14 +77,35 @@ class RenderTests(unittest.TestCase):
                 "title": "Fix login bug",
                 "sourceRefName": "refs/heads/fix-login",
                 "status": "active",
+                "repository": {"id": "repo-1"},
                 "_links": {"web": {"href": "https://dev.azure.com/example/_git/repo/pullrequest/17"}},
             }
         ]
+        pr_threads = {
+            ("repo-1", 17): {
+                "value": [
+                    {
+                        "id": 501,
+                        "status": "active",
+                        "threadContext": {"filePath": "/src/login.py", "rightFileEnd": {"line": 8}},
+                        "comments": [
+                            {
+                                "publishedDate": "2026-03-10T10:15:00Z",
+                                "author": {"displayName": "Dana"},
+                                "content": "<p>Check null users.</p>",
+                                "commentType": "text",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
 
         rendered = build_rendered_work_item(
             work_item,
             comments_payload=comments_payload,
             pull_request_payloads=prs,
+            pull_request_thread_payloads=pr_threads,
             fields={
                 "description": "System.Description",
                 "acceptance": "Microsoft.VSTS.Common.AcceptanceCriteria",
@@ -81,7 +113,7 @@ class RenderTests(unittest.TestCase):
                 "system_info": "Microsoft.VSTS.TCM.SystemInfo",
             },
             extra_fields=["Custom.DevNotes"],
-            selected_sections=("metadata", "description", "acceptance", "comments", "prs"),
+            selected_sections=("metadata", "description", "acceptance", "comments", "attachments", "prs"),
         )
 
         markdown = render_markdown(rendered)
@@ -91,6 +123,9 @@ class RenderTests(unittest.TestCase):
         self.assertIn("## Repro Steps", markdown)
         self.assertIn("## System Info", markdown)
         self.assertIn("@Alice Smith", markdown)
+        self.assertIn("# Attachments", markdown)
+        self.assertIn("notes.txt", markdown)
+        self.assertIn("Check null users.", markdown)
         self.assertIn("# Additional Fields", markdown)
         self.assertEqual(payload["sections"]["description"]["field"], "System.Description")
         self.assertEqual(
@@ -98,6 +133,8 @@ class RenderTests(unittest.TestCase):
             "Custom.DevNotes",
         )
         self.assertEqual(payload["sections"]["comments"][0]["author"], "Bob")
+        self.assertEqual(payload["sections"]["attachments"][0]["name"], "notes.txt")
+        self.assertEqual(payload["sections"]["prs"][0]["comments"][0]["path"], "/src/login.py")
 
     def test_extract_pull_request_refs(self) -> None:
         relations = [
@@ -109,6 +146,49 @@ class RenderTests(unittest.TestCase):
         ]
 
         self.assertEqual(extract_pull_request_refs(relations), [("repo-1", 42)])
+
+    def test_extract_and_download_attachments(self) -> None:
+        relations = [
+            {
+                "rel": "AttachedFile",
+                "url": "https://dev.azure.com/example/_apis/wit/attachments/a1?fileName=notes.txt",
+                "attributes": {"name": "notes.txt", "comment": "Notes", "resourceSize": "9"},
+            },
+            {
+                "rel": "AttachedFile",
+                "url": "https://dev.azure.com/example/_apis/wit/attachments/a2?fileName=trace.log",
+                "attributes": {"name": "trace.log", "comment": "Trace", "resourceSize": "11"},
+            }
+        ]
+        attachments = extract_attachments(relations)
+        self.assertEqual(attachments[0].name, "notes.txt")
+        self.assertEqual(
+            filter_attachments(attachments, names=["trace.log"])[0].url,
+            "https://dev.azure.com/example/_apis/wit/attachments/a2?fileName=trace.log",
+        )
+        self.assertEqual(
+            missing_attachment_selectors(attachments, urls=["https://example.invalid/missing"]),
+            ("url=https://example.invalid/missing",),
+        )
+
+        root = workspace_dir("attachments")
+        try:
+            previous_cwd = Path.cwd()
+            os.chdir(root)
+            try:
+                local_paths = download_attachments(
+                    filter_attachments(attachments, names=["notes.txt"]),
+                    output_path=None,
+                    download_dir="files",
+                    downloader=lambda _url: (b"contents", "text/plain"),
+                )
+            finally:
+                os.chdir(previous_cwd)
+
+            self.assertEqual(local_paths[relations[0]["url"]], "files/notes.txt")
+            self.assertEqual((root / "files" / "notes.txt").read_bytes(), b"contents")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_localize_images_resolves_relative_to_cwd(self) -> None:
         rendered = build_rendered_work_item(

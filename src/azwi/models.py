@@ -17,12 +17,33 @@ class CommentItem:
 
 
 @dataclass(frozen=True)
+class AttachmentItem:
+    name: str
+    url: str
+    comment: str
+    size: int | None
+    local_path: str
+
+
+@dataclass(frozen=True)
+class PullRequestCommentItem:
+    thread_id: int
+    status: str
+    created_date: str
+    author_display_name: str
+    path: str
+    line: int | None
+    markdown: str
+
+
+@dataclass(frozen=True)
 class PullRequestItem:
     pr_id: int
     title: str
     source_branch: str
     status: str
     url: str
+    comments: tuple[PullRequestCommentItem, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -37,6 +58,7 @@ class RenderedWorkItem:
     repro_steps: TextSection
     system_info: TextSection
     comments: tuple[CommentItem, ...]
+    attachments: tuple[AttachmentItem, ...]
     prs: tuple[PullRequestItem, ...]
     extra_fields: tuple[tuple[str, TextSection], ...]
     selected_sections: tuple[str, ...]

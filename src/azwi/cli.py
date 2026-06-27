@@ -21,9 +21,13 @@ from azwi.config import (
 from azwi.errors import AzwiError, ConfigError, UsageError
 from azwi.render import (
     build_rendered_work_item,
+    download_attachments,
+    ensure_sections,
+    extract_attachments,
     extract_pull_request_refs,
-    filter_pull_requests,
+    filter_attachments,
     localize_markdown_images,
+    missing_attachment_selectors,
     normalize_sections,
     render_json,
     render_markdown,
@@ -153,13 +157,14 @@ def build_root_help(program: str) -> str:
         f"  --format {{json,markdown}}      Output format (default: json)\n"
         f"  --section NAME                Repeatable section selector\n"
         f"  --output PATH                 Write to file instead of stdout\n"
-        f"  --download-images DIR         Requires --output\n\n"
+        f"  --download-images DIR         Requires --output\n"
+        f"  --download-attachments DIR    Download work item attachments\n\n"
         f"Env:\n"
         f"  AZWI_PAT      Azure DevOps personal access token\n"
         f"  AZWI_ORG      Default organization for fetch and fields\n"
         f"  AZWI_PROJECT  Default project for fields\n\n"
         f"Sections:\n"
-        f"  metadata, description, acceptance, comments, prs\n\n"
+        f"  metadata, description, acceptance, comments, attachments, prs\n\n"
         f"Config:\n"
         f"  ~/.azwi/config.toml stores non-secret defaults and field mappings.\n\n"
         f"Exit codes:\n"
@@ -189,12 +194,19 @@ def build_fetch_help(program: str) -> str:
         f"Selection:\n"
         f"  --section NAME                Repeatable section selector\n"
         f"  --comment-limit N             1..50; used when comments are requested (default: 10)\n"
-        f"  --pr-status {{active,all}}      Linked PR filter (default: active)\n\n"
+        f"  --pr-status {{active,all}}      Linked PR filter (default: active)\n"
+        f"  --include-pr-comments         Include PR thread comments under linked PRs\n"
+        f"  --pr-comment-status {{active,all}}\n"
+        f"                               PR thread comment filter (default: active)\n"
+        f"  --include-pr-system-comments  Include Azure DevOps PR system comments\n\n"
         f"Output:\n"
         f"  --format {{json,markdown}}      Output format (default: json)\n"
         f"  --output PATH                 Write to file instead of stdout\n"
         f"  --force                       Overwrite --output target if it exists\n"
-        f"  --download-images DIR         Download remote markdown images into DIR; requires --output\n\n"
+        f"  --download-images DIR         Download remote markdown images into DIR; requires --output\n"
+        f"  --download-attachments DIR    Download work item attachments into DIR\n"
+        f"  --attachment-name NAME        Repeatable exact attachment name filter\n"
+        f"  --attachment-url URL          Repeatable exact attachment URL filter\n\n"
         f"Field overrides:\n"
         f"  --field-description REFNAME\n"
         f"  --field-acceptance REFNAME\n"
@@ -205,7 +217,7 @@ def build_fetch_help(program: str) -> str:
         f"  --org ORG                     Override organization for this fetch\n"
         f"  Project is resolved from the fetched work item's System.TeamProject field.\n\n"
         f"Sections:\n"
-        f"  metadata, description, acceptance, comments, prs\n\n"
+        f"  metadata, description, acceptance, comments, attachments, prs\n\n"
         f"Env:\n"
         f"  AZWI_PAT      Azure DevOps personal access token\n"
         f"  AZWI_ORG      Default organization for fetch\n"
@@ -217,6 +229,9 @@ def build_fetch_help(program: str) -> str:
         f"  {program} 2195 --org my-org\n"
         f"  {program} 2195 --format markdown\n"
         f"  {program} 2195 --section metadata --section comments --comment-limit 20\n"
+        f"  {program} 2195 --section attachments --download-attachments wi-2195-assets\n"
+        f"  {program} 2195 --download-attachments wi-2195-assets --attachment-url URL\n"
+        f"  {program} 2195 --section prs --include-pr-comments --pr-comment-status all\n"
         f"  {program} 2195 --output wi-2195.md --download-images assets\n"
     )
 
@@ -237,6 +252,15 @@ def _run_fetch(
     parser = _build_fetch_parser(program)
     namespace = parser.parse_args(list(argv))
     selected_sections = normalize_sections(namespace.section)
+    required_sections = []
+    attachment_names = namespace.attachment_name or []
+    attachment_urls = namespace.attachment_url or []
+    if namespace.download_attachments or attachment_names or attachment_urls:
+        required_sections.append("attachments")
+    if namespace.include_pr_comments or namespace.pr_comment_status != "active" or namespace.include_pr_system_comments:
+        namespace.include_pr_comments = True
+        required_sections.append("prs")
+    selected_sections = ensure_sections(selected_sections, required_sections)
     if namespace.download_images and not namespace.output:
         raise UsageError("--download-images requires --output.")
     output_path = Path(namespace.output).resolve() if namespace.output else None
@@ -275,14 +299,51 @@ def _run_fetch(
             progress.update(f"Fetching comments for {namespace.work_item_id}")
             comments_payload = client.get_comments(resolved.project, namespace.work_item_id, namespace.comment_limit)
 
+        attachment_local_paths: dict[str, str] = {}
+        selected_attachments = ()
+        if "attachments" in selected_sections:
+            all_attachments = extract_attachments(work_item.get("relations"))
+            missing_selectors = missing_attachment_selectors(
+                all_attachments,
+                names=attachment_names,
+                urls=attachment_urls,
+            )
+            if missing_selectors:
+                raise UsageError("Attachment selector did not match: " + ", ".join(missing_selectors))
+            selected_attachments = filter_attachments(
+                all_attachments,
+                names=attachment_names,
+                urls=attachment_urls,
+            )
+        if namespace.download_attachments:
+            progress.update("Downloading attachments")
+            attachment_local_paths = download_attachments(
+                selected_attachments,
+                output_path=output_path,
+                download_dir=namespace.download_attachments,
+                downloader=client.download,
+            )
+
         pull_request_payloads: list[dict[str, Any]] = []
+        pull_request_thread_payloads: dict[tuple[str, int], dict[str, Any]] = {}
         if "prs" in selected_sections:
             pull_request_refs = extract_pull_request_refs(work_item.get("relations"))
             total_pull_requests = len(pull_request_refs)
             for index, (repo_id, pr_id) in enumerate(pull_request_refs, start=1):
                 progress.update(f"Fetching linked PRs ({index}/{total_pull_requests})")
-                pull_request_payloads.append(client.get_pull_request(resolved.project, repo_id, pr_id))
-            pull_request_payloads = filter_pull_requests(pull_request_payloads, status=namespace.pr_status)
+                pull_request_payload = client.get_pull_request(resolved.project, repo_id, pr_id)
+                if not isinstance(pull_request_payload.get("repository"), dict):
+                    pull_request_payload["repository"] = {"id": repo_id}
+                if namespace.pr_status != "all" and str(pull_request_payload.get("status", "")).lower() != namespace.pr_status:
+                    continue
+                pull_request_payloads.append(pull_request_payload)
+                if namespace.include_pr_comments:
+                    progress.update(f"Fetching PR comments ({index}/{total_pull_requests})")
+                    pull_request_thread_payloads[(repo_id, pr_id)] = client.get_pull_request_threads(
+                        resolved.project,
+                        repo_id,
+                        pr_id,
+                    )
 
         rendered = build_rendered_work_item(
             work_item,
@@ -291,6 +352,12 @@ def _run_fetch(
             fields=resolved.fields,
             extra_fields=resolved.extra_fields,
             selected_sections=selected_sections,
+            attachment_local_paths=attachment_local_paths,
+            attachment_names=attachment_names,
+            attachment_urls=attachment_urls,
+            pull_request_thread_payloads=pull_request_thread_payloads,
+            pr_comment_status=namespace.pr_comment_status,
+            include_pr_system_comments=namespace.include_pr_system_comments,
         )
         if namespace.download_images and output_path is not None:
             progress.update("Downloading and rewriting images")
@@ -414,7 +481,7 @@ def _build_fetch_parser(program: str) -> argparse.ArgumentParser:
         description=(
             "Fetch an Azure DevOps work item.\n\n"
             "Env: AZWI_PAT, AZWI_ORG, AZWI_PROJECT\n"
-            "Sections: metadata, description, acceptance, comments, prs\n"
+            "Sections: metadata, description, acceptance, comments, attachments, prs\n"
             "Exit codes: 0 success, 2 usage, 3 config, 4 auth, 5 not found, 6 api error, 7 throttled"
         ),
     )
@@ -423,15 +490,21 @@ def _build_fetch_parser(program: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--section",
         action="append",
-        choices=["metadata", "description", "acceptance", "comments", "prs"],
+        choices=["metadata", "description", "acceptance", "comments", "attachments", "prs"],
         help="repeatable output section selector",
     )
     parser.add_argument("--comment-limit", type=_comment_limit, default=10, help="max comments when comments are requested")
     parser.add_argument("--pr-status", choices=["active", "all"], default="active", help="linked PR status filter")
+    parser.add_argument("--include-pr-comments", action="store_true", help="include PR thread comments under linked PRs")
+    parser.add_argument("--pr-comment-status", choices=["active", "all"], default="active", help="PR thread comment status filter")
+    parser.add_argument("--include-pr-system-comments", action="store_true", help="include Azure DevOps PR system comments")
     parser.add_argument("--format", choices=["markdown", "json"], default="json", help="output format")
     parser.add_argument("--output", help="write output to PATH instead of stdout")
     parser.add_argument("--force", action="store_true", help="overwrite --output target if it exists")
     parser.add_argument("--download-images", metavar="DIR", help="download remote markdown images into DIR")
+    parser.add_argument("--download-attachments", metavar="DIR", help="download work item attachments into DIR")
+    parser.add_argument("--attachment-name", action="append", help="repeatable exact attachment name filter")
+    parser.add_argument("--attachment-url", action="append", help="repeatable exact attachment URL filter")
     parser.add_argument("--field-description", help="override description field refname")
     parser.add_argument("--field-acceptance", help="override acceptance field refname")
     parser.add_argument("--field-repro-steps", help="override repro steps field refname")
