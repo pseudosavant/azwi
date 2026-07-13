@@ -315,12 +315,47 @@ At minimum:
 azwi fields --type "User Story"
 azwi config show
 azwi config set-defaults --org my-org --project ProjectA
+azwi install-skill
+azwi remove-skill
 ```
 
 Optional but reasonable for v2 if desired:
 
 - `azwi doctor`
 - `azwi version`
+
+## About output
+
+`azwi --about` prints the command name and package version, a one-sentence summary, the project URL, and the MIT license to stdout, then exits successfully without diagnostics.
+
+Project URL:
+
+```text
+https://github.com/pseudosavant/azwi
+```
+
+## Managed agent skill
+
+`azwi` manages an agent-neutral `$azure-workitem` skill:
+
+```text
+azwi install-skill
+azwi remove-skill
+```
+
+Requirements:
+
+1. The default skill path is `~/.agents/skills/azure-workitem/SKILL.md`.
+2. Both commands accept `--skills-dir DIR` to override the skills root.
+3. `install-skill` creates or updates the skill and overwrites existing `SKILL.md` content by default.
+4. `remove-skill` removes a skill marked as managed by `azwi`.
+5. `remove-skill` refuses to remove unmanaged content unless `--force` is provided.
+6. Both commands write deterministic JSON result objects to stdout and diagnostics to stderr only.
+7. `$azure-workitem <id>` calls `uvx azwi <id>` and parses the default JSON output.
+8. For supported Azure DevOps Cloud work item URLs, the skill extracts the ID and organization and calls `uvx azwi <id> --org <org>`.
+9. URL parsing belongs to the skill; the public fetch CLI remains `azwi <work_item_id> [options]`.
+10. The skill keeps attachment downloads, image downloads, and PR thread comments opt-in, matching the CLI behavior.
+11. If attachment download is requested without a destination, the skill uses `./azwi-<id>-attachments`; a user-supplied destination wins.
 
 ## Config subcommands
 
@@ -532,6 +567,7 @@ Requirements:
 5. Keep examples concise and directly copyable.
 6. Avoid long narrative paragraphs.
 7. Do not document deprecated compatibility behavior ahead of the preferred behavior.
+8. Show the project URL and MIT license in both root and fetch help.
 
 ---
 
@@ -814,6 +850,8 @@ The v2 implementation should include automated tests for:
 8. attachment metadata, selector filtering, and download path rendering
 9. PR thread comment filtering
 10. error classification and exit codes
+11. help and `--about` project/license output
+12. managed skill installation, overwrite, removal, URL guidance, and advanced fetch instructions
 
 Use recorded fixtures or mocked HTTP responses for Azure DevOps API calls.
 
@@ -829,6 +867,8 @@ The implementation is done when all of the following are true:
 4. the built package exposes an `azwi` console script
 5. after publishing to PyPI, `uvx azwi --help` works
 6. the README documents setup, PAT scopes, examples, and publishing notes
+7. `uv run ./azwi.py --about` prints version, summary, project URL, and MIT license
+8. `uv run ./azwi.py install-skill --skills-dir DIR` installs a valid `$azure-workitem` skill
 
 ---
 
@@ -858,3 +898,9 @@ The implementation is done when all of the following are true:
 22. PR thread comments are opt-in with `--include-pr-comments`.
 23. PR thread comments default to `--pr-comment-status active`, with `all` available for active and resolved threads.
 24. Attachment selectors are exact-match repeatable filters: `--attachment-name NAME` and `--attachment-url URL`.
+25. Root and fetch help show `https://github.com/pseudosavant/azwi` and the MIT license.
+26. `--about` prints the package version, summary, project URL, and license.
+27. `install-skill` and `remove-skill` manage `$azure-workitem` under `~/.agents/skills` by default.
+28. Skill installation overwrites existing skill content by default; removal requires a managed marker unless forced.
+29. `$azure-workitem` accepts numeric IDs and supported Azure DevOps Cloud URLs while the public `azwi` fetch command remains ID-only.
+30. The skill preserves the CLI's opt-in behavior for downloads and PR thread comments.

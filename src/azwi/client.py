@@ -10,6 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from azwi import __version__
 from azwi.errors import ApiError, AuthError, ConfigError, NotFoundError, ThrottledError
 
 
@@ -135,7 +136,7 @@ class AzureDevOpsClient:
     def _headers(self, *, allow_auth: bool, accept: str) -> dict[str, str]:
         headers = {
             "Accept": accept,
-            "User-Agent": "azwi/1.0.0",
+            "User-Agent": f"azwi/{__version__}",
         }
         if allow_auth:
             token = base64.b64encode(f":{self.pat}".encode("utf-8")).decode("ascii")

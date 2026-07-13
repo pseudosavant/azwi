@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -32,6 +33,11 @@ from azwi.render import (
     render_json,
     render_markdown,
 )
+from azwi.skill import install_skill, remove_skill
+
+
+PROJECT_URL = "https://github.com/pseudosavant/azwi"
+LICENSE_NAME = "MIT"
 
 EXIT_CODES = {
     0: "success",
@@ -98,9 +104,16 @@ def run_cli(
         if not args or args[0] in {"-h", "--help"}:
             stdout.write(build_root_help(program))
             return 0
+        if args == ["--about"]:
+            stdout.write(build_about_text())
+            return 0
         if args[0] in {"version", "--version"}:
             stdout.write(f"{__version__}\n")
             return 0
+        if args[0] == "install-skill":
+            return _run_install_skill(args[1:], stdout=stdout, program=program)
+        if args[0] == "remove-skill":
+            return _run_remove_skill(args[1:], stdout=stdout, program=program)
         if args[0] == "fields":
             return _run_fields(
                 args[1:],
@@ -151,6 +164,9 @@ def build_root_help(program: str) -> str:
         f"  {program} fields --type TYPE             List field reference names for a work item type\n"
         f"  {program} config show                    Show resolved config\n"
         f"  {program} config set-defaults ...        Set defaults in ~/.azwi/config.toml\n"
+        f"  {program} install-skill                  Install or update $azure-workitem\n"
+        f"  {program} remove-skill                   Remove the managed $azure-workitem skill\n"
+        f"  {program} --about                        Print version, project, and license\n"
         f"  {program} version                        Print version and exit\n\n"
         f"Common fetch options:\n"
         f"  --org ORG                     Override organization\n"
@@ -176,6 +192,12 @@ def build_root_help(program: str) -> str:
         f"  {program} 2195 --format markdown\n"
         f"  {program} fields --type Bug --project Payments\n"
         f"  {program} config show\n"
+        f"  {program} install-skill\n"
+        f"  {program} --about\n\n"
+        f"Project:\n"
+        f"  {PROJECT_URL}\n"
+        f"License:\n"
+        f"  {LICENSE_NAME}\n"
     )
 
 
@@ -233,7 +255,42 @@ def build_fetch_help(program: str) -> str:
         f"  {program} 2195 --download-attachments wi-2195-assets --attachment-url URL\n"
         f"  {program} 2195 --section prs --include-pr-comments --pr-comment-status all\n"
         f"  {program} 2195 --output wi-2195.md --download-images assets\n"
+        f"\nProject:\n"
+        f"  {PROJECT_URL}\n"
+        f"License:\n"
+        f"  {LICENSE_NAME}\n"
     )
+
+
+def build_about_text() -> str:
+    return (
+        f"azwi {__version__}\n\n"
+        f"Agent-first CLI for fetching Azure DevOps work item context as Markdown or JSON.\n\n"
+        f"Project: {PROJECT_URL}\n"
+        f"License: {LICENSE_NAME}\n"
+    )
+
+
+def _write_json_payload(payload: object, stdout: object) -> None:
+    stdout.write(json.dumps(payload, indent=2))
+    stdout.write("\n")
+
+
+def _run_install_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
+    parser = argparse.ArgumentParser(prog=f"{program} install-skill", description="Install or update $azure-workitem.")
+    parser.add_argument("--skills-dir", type=Path, help="install into this skills root directory")
+    namespace = parser.parse_args(list(argv))
+    _write_json_payload(install_skill(namespace.skills_dir), stdout)
+    return 0
+
+
+def _run_remove_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
+    parser = argparse.ArgumentParser(prog=f"{program} remove-skill", description="Remove the managed $azure-workitem skill.")
+    parser.add_argument("--skills-dir", type=Path, help="remove from this skills root directory")
+    parser.add_argument("--force", action="store_true", help="remove even if the skill is not managed")
+    namespace = parser.parse_args(list(argv))
+    _write_json_payload(remove_skill(namespace.skills_dir, force=namespace.force), stdout)
+    return 0
 
 
 def _run_fetch(

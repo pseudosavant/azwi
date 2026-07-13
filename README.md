@@ -17,6 +17,7 @@ Packaged command:
 
 ```text
 uvx azwi --help
+uvx azwi --about
 azwi 2195 --org my-org
 ```
 
@@ -56,6 +57,7 @@ azwi 2195 --field-acceptance Custom.Acceptance
 azwi 2195 --extra-field Custom.DevNotes
 azwi fields --type Bug --project Payments
 azwi config show
+azwi install-skill
 ```
 
 ## Commands
@@ -81,6 +83,29 @@ azwi config set-field --global --acceptance Microsoft.VSTS.Common.AcceptanceCrit
 azwi config set-field --project Payments --description Custom.DevDescription
 azwi config add-extra-field --project Payments Custom.ReleaseNotes
 ```
+
+Show version, project, and license information:
+
+```text
+azwi --about
+```
+
+Manage the `$azure-workitem` skill:
+
+```text
+azwi install-skill
+azwi remove-skill
+```
+
+## Agent skill
+
+`azwi install-skill` installs or updates `$azure-workitem` at `~/.agents/skills/azure-workitem/SKILL.md`. Use `--skills-dir DIR` to target a different skills root. Installation overwrites existing skill content by default.
+
+The skill accepts a numeric work item ID or a supported Azure DevOps Cloud work item URL. A URL supplies both the work item ID and organization; the skill then calls `uvx azwi <id> --org <org>`. Bare IDs use `uvx azwi <id>` and the normal azwi organization resolution.
+
+The skill parses azwi's default JSON and answers the user's request. It documents work item comments, linked PRs, opt-in PR thread comments, attachment selectors, attachment downloads, and image downloads. Downloads and PR thread comments remain opt-in. When attachment download is requested without a directory, the skill uses `./azwi-<id>-attachments`; an explicitly requested directory wins.
+
+`azwi remove-skill` removes the managed skill. It refuses unmanaged skill content unless `--force` is supplied.
 
 ## Output
 
@@ -190,7 +215,7 @@ uv build --no-sources
 
 Release workflow:
 
-- tag a release such as `v1.0.0`
+- tag a release such as `v1.1.0`
 - GitHub Actions builds the package
 - publish to PyPI using Trusted Publishing
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import shutil
 import sys
 import unittest
@@ -14,6 +15,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from azwi import __version__
 from azwi.cli import run_cli
 from azwi.client import AzureDevOpsClient
 
@@ -165,6 +167,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("azwi <work_item_id> [options]", stdout.getvalue())
         self.assertIn("Usually the only argument you need is the work item ID.", stdout.getvalue())
+        self.assertIn("install-skill", stdout.getvalue())
+        self.assertIn("remove-skill", stdout.getvalue())
+        self.assertIn("azwi --about", stdout.getvalue())
+        self.assertIn("Project:\n  https://github.com/pseudosavant/azwi", stdout.getvalue())
+        self.assertIn("License:\n  MIT", stdout.getvalue())
         self.assertNotIn("--repo", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
@@ -183,7 +190,73 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("Usually the only required argument is the work item ID.", stdout.getvalue())
         self.assertIn("--field-acceptance REFNAME", stdout.getvalue())
+        self.assertIn("Project:\n  https://github.com/pseudosavant/azwi", stdout.getvalue())
+        self.assertIn("License:\n  MIT", stdout.getvalue())
         self.assertNotIn("--project", stdout.getvalue())
+
+    def test_about_prints_project_and_license(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = run_cli(
+            ["--about"],
+            stdout=stdout,
+            stderr=stderr,
+            env={},
+            config_path=None,
+            client_factory=FakeClient,
+            program="azwi",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            stdout.getvalue(),
+            f"azwi {__version__}\n\n"
+            "Agent-first CLI for fetching Azure DevOps work item context as Markdown or JSON.\n\n"
+            "Project: https://github.com/pseudosavant/azwi\n"
+            "License: MIT\n",
+        )
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_client_user_agent_tracks_package_version(self) -> None:
+        client = AzureDevOpsClient("example-org", "token")
+
+        headers = client._headers(allow_auth=False, accept="application/json")
+        self.assertEqual(headers["User-Agent"], f"azwi/{__version__}")
+
+    def test_install_and_remove_skill_commands_output_json(self) -> None:
+        with workspace_dir("skill-command") as skills_root:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            exit_code = run_cli(
+                ["install-skill", "--skills-dir", str(skills_root)],
+                stdout=stdout,
+                stderr=stderr,
+                env={},
+                config_path=None,
+                client_factory=FakeClient,
+                program="azwi",
+            )
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(payload["installed"])
+            self.assertEqual(payload["skill"], "azure-workitem")
+            self.assertTrue((skills_root / "azure-workitem" / "SKILL.md").exists())
+            self.assertEqual(stderr.getvalue(), "")
+
+            stdout = io.StringIO()
+            exit_code = run_cli(
+                ["remove-skill", "--skills-dir", str(skills_root)],
+                stdout=stdout,
+                stderr=stderr,
+                env={},
+                config_path=None,
+                client_factory=FakeClient,
+                program="azwi",
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(json.loads(stdout.getvalue())["removed"])
+            self.assertFalse((skills_root / "azure-workitem").exists())
 
     def test_fetch_selected_sections_and_stdout_stderr_behavior(self) -> None:
         stdout = io.StringIO()
