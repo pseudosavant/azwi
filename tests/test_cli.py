@@ -5,9 +5,11 @@ import io
 import json
 import shutil
 import sys
+import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -159,6 +161,11 @@ class TtyStringIO(io.StringIO):
 class CliTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeClient.instances.clear()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        skills = patch("azwi.skill.default_skills_dir", return_value=Path(temporary.name) / "skills")
+        skills.start()
+        self.addCleanup(skills.stop)
 
     def test_root_help_and_fetch_help_match_contract(self) -> None:
         stdout = io.StringIO()

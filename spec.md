@@ -326,7 +326,7 @@ Optional but reasonable for v2 if desired:
 
 ## About output
 
-`azwi --about` prints the command name and package version, a one-sentence summary, the project URL, and the MIT license to stdout, then exits successfully without diagnostics.
+`azwi --about` prints the command name and package version, a one-sentence summary, the project URL, and the MIT license to stdout, then exits successfully. Skill maintenance notices may appear on stderr.
 
 Project URL:
 
@@ -339,23 +339,56 @@ https://github.com/pseudosavant/azwi
 `azwi` manages an agent-neutral `$azure-workitem` skill:
 
 ```text
-azwi install-skill
-azwi remove-skill
+uvx azwi skill install
+uvx azwi skill status
+uvx azwi skill remove
 ```
 
 Requirements:
 
 1. The default skill path is `~/.agents/skills/azure-workitem/SKILL.md`.
-2. Both commands accept `--skills-dir DIR` to override the skills root.
-3. `install-skill` creates or updates the skill and overwrites existing `SKILL.md` content by default.
-4. `remove-skill` removes a skill marked as managed by `azwi`.
-5. `remove-skill` refuses to remove unmanaged content unless `--force` is provided.
-6. Both commands write deterministic JSON result objects to stdout and diagnostics to stderr only.
+2. All skill commands accept `--skills-dir DIR` to override the skills root. Custom locations require explicit updates.
+3. `skill install` creates a missing skill or updates a pristine older managed skill. Installing the canonical skill again is a no-op. Unmanaged content is never overwritten.
+4. `skill remove` removes only `SKILL.md` and its directory if empty. Unrelated files are preserved.
+5. Removal refuses unmanaged content unless `--force` is provided. Installation and removal refuse linked paths and unexpected file types.
+6. Skill commands write deterministic JSON result objects to stdout and diagnostics to stderr only. `skill status --format plain` also supports plain output. `install-skill`, `remove-skill`, and `skill-status` are aliases.
 7. `$azure-workitem <id>` calls `uvx azwi <id>` and parses the default JSON output.
 8. For supported Azure DevOps Cloud work item URLs, the skill extracts the ID and organization and calls `uvx azwi <id> --org <org>`.
-9. URL parsing belongs to the skill; the public fetch CLI remains `azwi <work_item_id> [options]`.
+9. URL parsing belongs to the skill. The public fetch CLI remains `azwi <work_item_id> [options]`.
 10. The skill keeps attachment downloads, image downloads, and PR thread comments opt-in, matching the CLI behavior.
-11. If attachment download is requested without a destination, the skill uses `./azwi-<id>-attachments`; a user-supplied destination wins.
+11. If attachment download is requested without a destination, the skill uses `./azwi-<id>-attachments`. A user-supplied destination wins.
+
+### Managed metadata and synchronization
+
+The canonical skill is generated from one bundled template. Its UTF-8 text has no BOM, uses LF line endings, and ends with a newline. The runtime authority is `azwi.__version__`, also used by CLI version output. Lifecycle metadata lives only in the YAML front matter:
+
+```yaml
+metadata:
+  managed-by: azwi
+  managed-version: "1.2.0"
+  managed-content-sha256: "sha256:<64 lowercase hexadecimal characters>"
+```
+
+The example hash is schematic. Generation hashes the complete text with the hash field set to `""`, after normalizing line endings to LF and encoding as UTF-8. Verification uses the installed file's own stored hash. Replace only the parsed hash scalar's value in memory. Do not reserialize YAML or compare against the current bundled hash. This detects modifications to body text, front matter, and formatting. It is not a signature or security boundary. Preserve any unrelated supported metadata used by the template. Do not add a top-level version or sidecar files.
+
+Automatic checks run before all normal commands, including no-argument help, fetch, fields, config, help, version, and about output. All skill-management commands skip automatic checks. Inspect only `~/.agents/skills/azure-workitem/SKILL.md`:
+
+1. An absent or unmanaged skill is left alone. Never create a missing skill automatically.
+2. A skill is managed when parsed `metadata.managed-by` equals `azwi`. The legacy `<!-- managed-by: azwi -->` marker is also recognized when no conflicting owner is present. New skills omit the legacy marker.
+3. A legacy unversioned skill has version 0 and receives a fresh replacement. Missing or malformed managed versions also receive a fresh replacement, before hash verification.
+4. Compare valid versions with PEP 440 semantics. Equal or newer installed versions are left alone. An invalid running version skips automatic synchronization.
+5. An older managed skill with a valid matching hash receives the current canonical skill. Older skills with missing, malformed, or mismatched hashes are preserved. Print a concise stderr notice recommending `uvx azwi skill install --force`.
+6. A successful update prints one stderr notice with old version, new version, and path. Absent, unmanaged, equal, newer, and development cases remain quiet. Maintenance failures may warn on stderr but never change the primary exit status or JSON stdout.
+
+`skill install --force` replaces altered content only for skills managed by azwi. Normal installation refuses altered or unverifiable managed content with valid version metadata and explains the force command. Explicit installation never downgrades a newer version, including with `--force`.
+
+`skill status` is read-only. Its result includes `path`, `standard_location`, `installed`, `managed`, `cli_version`, `managed_version`, `version_state`, `version_comparison`, `integrity`, `auto_sync_eligible`, `local_development_build`, and `force_install_command`. Unknown managed versions and inapplicable force commands use JSON null. `version_comparison` is `older`, `equal`, `newer`, or `not_applicable`. Integrity is `valid`, `altered`, `missing`, `malformed`, `legacy`, or `not_applicable`. Filesystem or YAML parsing errors use the CLI's usage error model.
+
+Runtime source checks require installed-distribution ownership of the executing module and inspect PEP 610 `direct_url.json`. Local source, local archives, and editable directory installs skip automatic updates. Unknown ownership also skips updates. Index installs and installed wheels, including local wheel files, remain eligible. Do not detect launchers. Explicit skill commands still work from development builds, including `uvx --from . azwi skill install`.
+
+Stage the complete replacement in a temporary file in the skill directory, flush and close it, re-read the installed state, and atomically replace `SKILL.md` with `os.replace`. Cancel if the observed file changed or disappeared during staging. Clean up temporary files on failure. There is no lock or waiting loop. This guards against observed concurrent changes without promising a filesystem compare-and-swap operation.
+
+Synchronization is local only. It does not query package indexes, refresh uv caches, or update the CLI. It affects future agent skill loading and may not change instructions already loaded by a running agent session.
 
 ## Config subcommands
 
@@ -900,7 +933,7 @@ The implementation is done when all of the following are true:
 24. Attachment selectors are exact-match repeatable filters: `--attachment-name NAME` and `--attachment-url URL`.
 25. Root and fetch help show `https://github.com/pseudosavant/azwi` and the MIT license.
 26. `--about` prints the package version, summary, project URL, and license.
-27. `install-skill` and `remove-skill` manage `$azure-workitem` under `~/.agents/skills` by default.
-28. Skill installation overwrites existing skill content by default; removal requires a managed marker unless forced.
+27. `skill install`, `skill status`, and `skill remove` manage `$azure-workitem` under `~/.agents/skills` by default. Existing command aliases remain supported.
+28. Skill installation protects unmanaged and modified content. Force installation can replace modified managed content. Removal requires managed metadata or a legacy marker unless forced.
 29. `$azure-workitem` accepts numeric IDs and supported Azure DevOps Cloud URLs while the public `azwi` fetch command remains ID-only.
 30. The skill preserves the CLI's opt-in behavior for downloads and PR thread comments.

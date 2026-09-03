@@ -5,11 +5,11 @@ import unittest
 from pathlib import Path
 
 from azwi.errors import UsageError
-from azwi.skill import MANAGED_MARKER, SKILL_MD, install_skill, remove_skill
+from azwi.skill import MANAGED_MARKER, install_skill, remove_skill, render_skill
 
 
 class SkillTests(unittest.TestCase):
-    def test_install_creates_updates_and_overwrites_skill(self) -> None:
+    def test_install_creates_and_preserves_unmanaged_skill(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             skills_root = Path(temp)
             first = install_skill(skills_root)
@@ -17,17 +17,17 @@ class SkillTests(unittest.TestCase):
 
             self.assertTrue(first["installed"])
             self.assertTrue(first["updated"])
-            self.assertEqual(skill_path.read_text(encoding="utf-8"), SKILL_MD)
+            self.assertEqual(skill_path.read_text(encoding="utf-8"), render_skill())
+
+            second = install_skill(skills_root)
+            self.assertFalse(second["updated"])
 
             skill_path.write_text("---\nname: azure-workitem\n---\ncustom\n", encoding="utf-8")
-            second = install_skill(skills_root)
-            self.assertTrue(second["updated"])
-            self.assertEqual(skill_path.read_text(encoding="utf-8"), SKILL_MD)
-
-            third = install_skill(skills_root)
-            self.assertFalse(third["updated"])
+            with self.assertRaises(UsageError):
+                install_skill(skills_root)
 
     def test_skill_covers_ids_urls_attachments_and_pr_comments(self) -> None:
+        SKILL_MD = render_skill()
         self.assertIn("$azure-workitem", SKILL_MD)
         self.assertIn("dev.azure.com/<org>", SKILL_MD)
         self.assertIn("<org>.visualstudio.com", SKILL_MD)
@@ -38,7 +38,7 @@ class SkillTests(unittest.TestCase):
         self.assertIn("--pr-comment-status all", SKILL_MD)
         self.assertIn("--include-pr-system-comments", SKILL_MD)
         self.assertIn("--download-images", SKILL_MD)
-        self.assertIn(MANAGED_MARKER, SKILL_MD)
+        self.assertNotIn(MANAGED_MARKER, SKILL_MD)
 
     def test_remove_only_removes_managed_skill_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

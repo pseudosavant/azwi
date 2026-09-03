@@ -57,7 +57,7 @@ azwi 2195 --field-acceptance Custom.Acceptance
 azwi 2195 --extra-field Custom.DevNotes
 azwi fields --type Bug --project Payments
 azwi config show
-azwi install-skill
+uvx azwi skill install
 ```
 
 ## Commands
@@ -93,19 +93,35 @@ azwi --about
 Manage the `$azure-workitem` skill:
 
 ```text
-azwi install-skill
-azwi remove-skill
+uvx azwi skill install
+uvx azwi skill status
+uvx azwi skill remove
 ```
 
 ## Agent skill
 
-`azwi install-skill` installs or updates `$azure-workitem` at `~/.agents/skills/azure-workitem/SKILL.md`. Use `--skills-dir DIR` to target a different skills root. Installation overwrites existing skill content by default.
+`uvx azwi skill install` installs `$azure-workitem` at `~/.agents/skills/azure-workitem/SKILL.md`. The existing `install-skill` and `remove-skill` commands remain available as aliases. Skill commands return JSON by default. Use `skill status --format plain` for plain text.
 
-The skill accepts a numeric work item ID or a supported Azure DevOps Cloud work item URL. A URL supplies both the work item ID and organization; the skill then calls `uvx azwi <id> --org <org>`. Bare IDs use `uvx azwi <id>` and the normal azwi organization resolution.
+Normally installed releases automatically synchronize an already-installed managed skill when its version is older and its content is unchanged. The running CLI's version is the authority. Synchronization is local. It does not query PyPI, refresh uv's cache, or update azwi itself. It never installs an absent skill, overwrites an unmanaged skill, or downgrades a newer skill. Notices go to stderr, keeping JSON stdout clean.
 
-The skill parses azwi's default JSON and answers the user's request. It documents work item comments, linked PRs, opt-in PR thread comments, attachment selectors, attachment downloads, and image downloads. Downloads and PR thread comments remain opt-in. When attachment download is requested without a directory, the skill uses `./azwi-<id>-attachments`; an explicitly requested directory wins.
+Managed skills store `managed-by: azwi`, a quoted `managed-version`, and `managed-content-sha256` under the YAML front matter `metadata` mapping. The SHA-256 hash covers the entire file with LF line endings and the hash value replaced by `""`. Modified or unverifiable skills with valid version metadata are preserved. Legacy HTML markers remain recognized. Missing or malformed managed versions receive a fresh replacement.
 
-`azwi remove-skill` removes the managed skill. It refuses unmanaged skill content unless `--force` is supplied.
+Inspect the version, integrity, and update eligibility, or explicitly replace modified managed content:
+
+```text
+uvx azwi skill status
+uvx azwi skill install --force
+```
+
+`--force` on installation still refuses unmanaged content. A normal install creates a missing skill or updates a pristine older managed skill. Reinstalling the canonical skill is a no-op. Automatic checks run for normal commands, including help, version, and `--about`. Skill-management commands skip those checks. `skill status` is read-only.
+
+Automatic synchronization only uses the standard directory. Custom locations require explicit updates with `uvx azwi skill install --skills-dir DIR`, adding `--force` if needed. Local checkouts, direct source installs, and editable builds skip automatic synchronization. Explicit installation still works, including `uvx --from . azwi skill install`. Installed wheels remain eligible. Updates affect future agent skill loading and may not change instructions already loaded in a running agent session.
+
+The skill accepts a numeric work item ID or a supported Azure DevOps Cloud work item URL. A URL supplies both the work item ID and organization. The skill then calls `uvx azwi <id> --org <org>`. Bare IDs use `uvx azwi <id>` and the normal azwi organization resolution.
+
+The skill parses azwi's default JSON and answers the user's request. It documents work item comments, linked PRs, opt-in PR thread comments, attachment selectors, attachment downloads, and image downloads. Downloads and PR thread comments remain opt-in. When attachment download is requested without a directory, the skill uses `./azwi-<id>-attachments`. An explicitly requested directory wins.
+
+`uvx azwi skill remove` removes the managed `SKILL.md` and its directory if empty. It preserves unrelated files. Removal refuses unmanaged skill content unless `--force` is supplied. Both installation and removal refuse linked paths or unexpected file types.
 
 ## Output
 
@@ -215,9 +231,19 @@ uv build --no-sources
 
 Release workflow:
 
-- tag a release such as `v1.1.0`
+- tag a release such as `v1.2.0`
 - GitHub Actions builds the package
 - publish to PyPI using Trusted Publishing
+
+Validation:
+
+```text
+python -m unittest discover -s tests -v
+uv build --no-sources
+python tests/wheel_smoke.py dist/azwi-1.2.0-py3-none-any.whl
+```
+
+The smoke check uses temporary environments and a temporary home directory. It checks wheel packaging, index-style metadata, local and editable installs, `uvx`, and the PEP 723 wrapper. It requires uv and access to build and runtime dependencies. No formatter or linter is configured in this repository.
 
 ## License
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "azwi"
-version = "1.1.0"
+version = "1.2.0"
 description = "Azure DevOps work item fetcher for agentic coding tools"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Version Control",
 ]
-dependencies = []
+dependencies = ["packaging>=23.2", "PyYAML>=6.0"]
 
 [project.urls]
 Repository = "https://github.com/pseudosavant/azwi"

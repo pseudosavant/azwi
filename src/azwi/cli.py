@@ -33,7 +33,7 @@ from azwi.render import (
     render_json,
     render_markdown,
 )
-from azwi.skill import install_skill, remove_skill
+from azwi.skill import install_skill, remove_skill, skill_status, sync_skill
 
 
 PROJECT_URL = "https://github.com/pseudosavant/azwi"
@@ -101,6 +101,9 @@ def run_cli(
 ) -> int:
     args = list(argv)
     try:
+        if args and args[0] in {"skill", "install-skill", "remove-skill", "skill-status"}:
+            return _run_skill(args, stdout=stdout, program=program)
+        sync_skill(stderr=stderr)
         if not args or args[0] in {"-h", "--help"}:
             stdout.write(build_root_help(program))
             return 0
@@ -110,10 +113,6 @@ def run_cli(
         if args[0] in {"version", "--version"}:
             stdout.write(f"{__version__}\n")
             return 0
-        if args[0] == "install-skill":
-            return _run_install_skill(args[1:], stdout=stdout, program=program)
-        if args[0] == "remove-skill":
-            return _run_remove_skill(args[1:], stdout=stdout, program=program)
         if args[0] == "fields":
             return _run_fields(
                 args[1:],
@@ -164,8 +163,10 @@ def build_root_help(program: str) -> str:
         f"  {program} fields --type TYPE             List field reference names for a work item type\n"
         f"  {program} config show                    Show resolved config\n"
         f"  {program} config set-defaults ...        Set defaults in ~/.azwi/config.toml\n"
-        f"  {program} install-skill                  Install or update $azure-workitem\n"
-        f"  {program} remove-skill                   Remove the managed $azure-workitem skill\n"
+        f"  {program} skill install [--force]        Install or update $azure-workitem\n"
+        f"  {program} skill remove [--force]         Remove $azure-workitem\n"
+        f"  {program} skill status [--format plain]  Inspect skill lifecycle state (default: json)\n"
+        f"  {program} install-skill / remove-skill   Existing skill command aliases\n"
         f"  {program} --about                        Print version, project, and license\n"
         f"  {program} version                        Print version and exit\n\n"
         f"Common fetch options:\n"
@@ -183,6 +184,10 @@ def build_root_help(program: str) -> str:
         f"  metadata, description, acceptance, comments, attachments, prs\n\n"
         f"Config:\n"
         f"  ~/.azwi/config.toml stores non-secret defaults and field mappings.\n\n"
+        f"Skill updates:\n"
+        f"  Installed releases synchronize pristine older managed skills in ~/.agents/skills.\n"
+        f"  Local builds and custom locations require explicit skill commands.\n"
+        f"  To replace modified managed content: uvx azwi skill install --force\n\n"
         f"Exit codes:\n"
         f"{exit_lines}\n\n"
         f"Examples:\n"
@@ -192,7 +197,7 @@ def build_root_help(program: str) -> str:
         f"  {program} 2195 --format markdown\n"
         f"  {program} fields --type Bug --project Payments\n"
         f"  {program} config show\n"
-        f"  {program} install-skill\n"
+        f"  uvx azwi skill install\n"
         f"  {program} --about\n\n"
         f"Project:\n"
         f"  {PROJECT_URL}\n"
@@ -276,20 +281,47 @@ def _write_json_payload(payload: object, stdout: object) -> None:
     stdout.write("\n")
 
 
-def _run_install_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
-    parser = argparse.ArgumentParser(prog=f"{program} install-skill", description="Install or update $azure-workitem.")
-    parser.add_argument("--skills-dir", type=Path, help="install into this skills root directory")
-    namespace = parser.parse_args(list(argv))
-    _write_json_payload(install_skill(namespace.skills_dir), stdout)
-    return 0
+def _skill_arguments(parser: argparse.ArgumentParser, command: str) -> None:
+    parser.add_argument("--skills-dir", type=Path, help="skills root (default: ~/.agents/skills)")
+    if command == "install":
+        parser.add_argument("--force", action="store_true", help="replace altered managed content. Never overwrite unmanaged content")
+    elif command == "remove":
+        parser.add_argument("--force", action="store_true", help="remove SKILL.md even if unmanaged. Preserve unrelated files")
+    else:
+        parser.add_argument("--format", choices=["json", "plain"], default="json", help="output format (default: json)")
 
 
-def _run_remove_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
-    parser = argparse.ArgumentParser(prog=f"{program} remove-skill", description="Remove the managed $azure-workitem skill.")
-    parser.add_argument("--skills-dir", type=Path, help="remove from this skills root directory")
-    parser.add_argument("--force", action="store_true", help="remove even if the skill is not managed")
-    namespace = parser.parse_args(list(argv))
-    _write_json_payload(remove_skill(namespace.skills_dir, force=namespace.force), stdout)
+def _run_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
+    descriptions = {
+        "install": "Install or update $azure-workitem. Preserve altered content unless --force is used.",
+        "remove": "Remove $azure-workitem SKILL.md. Preserve unrelated files.",
+        "status": "Inspect skill version, integrity, and automatic update eligibility without making changes.",
+    }
+    aliases = {"install-skill": "install", "remove-skill": "remove", "skill-status": "status"}
+    parser = argparse.ArgumentParser(prog=f"{program} {argv[0]}", description="Manage $azure-workitem. These commands do not run automatic synchronization.")
+    if argv[0] in aliases:
+        command = aliases[argv[0]]
+        parser.description = descriptions[command]
+        parser.set_defaults(skill_command=command)
+        _skill_arguments(parser, command)
+    else:
+        commands = parser.add_subparsers(dest="skill_command", required=True)
+        for command, description in descriptions.items():
+            child = commands.add_parser(command, help=description, description=description)
+            _skill_arguments(child, command)
+    namespace = parser.parse_args(list(argv[1:]))
+    if namespace.skill_command == "install":
+        payload = install_skill(namespace.skills_dir, force=namespace.force)
+    elif namespace.skill_command == "remove":
+        payload = remove_skill(namespace.skills_dir, force=namespace.force)
+    else:
+        payload = skill_status(namespace.skills_dir)
+        if namespace.format == "plain":
+            for key, value in payload.items():
+                rendered = json.dumps(value) if value is None or isinstance(value, bool) else str(value)
+                stdout.write(f"{key}: {rendered}\n")
+            return 0
+    _write_json_payload(payload, stdout)
     return 0
 
 
