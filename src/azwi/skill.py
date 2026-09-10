@@ -44,7 +44,7 @@ Use `uvx azwi` to fetch deterministic Azure DevOps work item context. Default ou
 - For `https://<org>.visualstudio.com/.../_workitems/edit/<id>`, extract the same numeric segment and call `uvx azwi <id> --org "<org>"`.
 - Reject unrelated URLs or ambiguous numbers instead of guessing.
 
-Keep URL handling in the skill. The `azwi` fetch command itself accepts a numeric work item ID.
+For fetches, keep URL handling in the skill. The `azwi` fetch command itself accepts a numeric work item ID. Setup and config checks also accept work item URLs.
 
 ## Fetch And Respond
 
@@ -56,7 +56,11 @@ uvx azwi <id>
 
 Use `--org "<org>"` when the input URL supplies the organization. Summarize the fields relevant to the request and preserve useful work item or PR links. Use `--format markdown` only when the user asks for Markdown or prompt-ready raw context.
 
-The common setup requires `AZWI_PAT` and an organization from `--org`, `AZWI_ORG`, or `~/.azwi/config.toml`. Never store PAT values in config or generated files.
+Authentication uses a non-empty `AZWI_PAT` first, then the selected organization's saved PAT in `~/.azwi/credentials.toml`. Let azwi read credentials internally. Resolve the organization from `--org`, `AZWI_ORG`, or `~/.azwi/config.toml`. Never read or print the credentials file through agent tools, copy PAT values into config or generated files, or ask the user to paste a PAT into the conversation.
+
+For first-time setup, direct the user to run `uvx azwi setup "<work-item-url>"` in their terminal. It saves the organization, prompts for a hidden PAT when needed, verifies the work item, saves the PAT in the separate credentials file, and installs this skill by default. For an expired saved token, direct the user to run setup with `--replace-pat` in their terminal. AZWI_PAT overrides the file and must be unset before replacing a saved PAT.
+
+For missing configuration or credentials, run `uvx azwi config check` or `uvx azwi config check "<work-item-url>"` to report readiness and next steps. Checks are read-only. A terminal and a sandboxed or remote agent can have different home directories, file access, or environment variables. Do not run interactive setup inside a non-interactive agent command. `setup --non-interactive` never prompts. It uses AZWI_PAT or saved credentials. If file access is unavailable, direct the user to configure AZWI_PAT in the execution environment.
 
 ## Comments And Pull Requests
 

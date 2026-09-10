@@ -11,6 +11,7 @@ from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from azwi import __version__
+from azwi.auth import ORG_HELP, PAT_SCOPES, missing_pat_message
 from azwi.errors import ApiError, AuthError, ConfigError, NotFoundError, ThrottledError
 
 
@@ -26,9 +27,9 @@ class AzureDevOpsClient:
         sleep=time.sleep,
     ) -> None:
         if not org:
-            raise ConfigError("Organization is required. Use --org, config defaults, or AZWI_ORG.")
+            raise ConfigError(ORG_HELP)
         if not pat:
-            raise AuthError("AZWI_PAT is not set.")
+            raise AuthError(missing_pat_message())
         self.org = org
         self.pat = pat
         self.verbose = verbose
@@ -115,7 +116,12 @@ class AzureDevOpsClient:
                     self._retry_sleep(attempt, exc.code)
                     continue
                 if exc.code in (401, 403):
-                    raise AuthError(f"Azure DevOps authentication failed: HTTP {exc.code}.") from exc
+                    raise AuthError(
+                        f"Azure DevOps authentication or access failed: HTTP {exc.code}. "
+                        f"Check that the PAT is valid for this organization and has {PAT_SCOPES}. "
+                        "Your account also needs access to the requested resource. "
+                        "Update AZWI_PAT if set. Otherwise run uvx azwi setup --replace-pat in your terminal, then retry the request."
+                    ) from exc
                 if exc.code == 404:
                     raise NotFoundError(f"Azure DevOps resource not found: {url}.") from exc
                 raise ApiError(f"Azure DevOps request failed: HTTP {exc.code} for {url}.") from exc

@@ -485,6 +485,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("Resolved issue.", stdout.getvalue())
 
     def test_missing_pat_returns_auth_exit_code(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
         stdout = io.StringIO()
         stderr = io.StringIO()
         exit_code = run_cli(
@@ -492,7 +494,7 @@ class CliTests(unittest.TestCase):
             stdout=stdout,
             stderr=stderr,
             env={"AZWI_ORG": "example-org"},
-            config_path=None,
+            config_path=Path(directory.name) / "config.toml",
             client_factory=AzureDevOpsClient,
             program="azwi",
         )

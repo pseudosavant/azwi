@@ -45,7 +45,7 @@ These points should drive the v2 design.
 ## Non-goals
 
 1. Full Azure DevOps CRUD support.
-2. Interactive auth flows for v2.
+2. Browser sign-in or automatic PAT creation. Setup may prompt for a work item URL, organization, and hidden PAT.
 3. Rich terminal UI.
 4. Maintaining byte-for-byte output compatibility with v1.
 
@@ -146,17 +146,18 @@ Notes:
 
 ## Authentication
 
-Primary auth method for v2:
-
-- PAT from environment variable `AZWI_PAT`
+Authentication uses a non-empty `AZWI_PAT` environment variable first, then the PAT for the resolved organization in `~/.azwi/credentials.toml`. An environment override bypasses credential-file access entirely. Never retry with another credential after an authentication failure.
 
 PAT storage policy:
 
 1. Do not store the PAT in `~/.azwi/config.toml`.
 2. `config.toml` is for non-secret defaults only.
-3. If persistent non-env auth is added later, it should use the OS credential store or another secure secret backend, not plain-text config.
-4. Do not add a v2 command that attempts to persistently set shell environment variables for the user across platforms.
-5. If an auth helper command is added later, it should target a secure credential store, not shell startup files.
+3. Do not persist or retrieve PATs through OS credential stores.
+4. Do not add a command that attempts to persistently set shell environment variables for the user across platforms.
+5. Interactive setup may prompt for a hidden PAT and save it in `~/.azwi/credentials.toml`. Store each PAT under `[orgs."<lowercase-org>"]` as a `pat` string. Preserve other organizations on replacement. Do not copy an environment PAT to disk automatically.
+6. Create the credentials file using ordinary inherited ACLs and the process umask. Do not apply current-user-only restrictions, chmod, or custom ACLs. Store it as plain text, independently of non-secret config.
+7. Save with a temporary sibling file and atomic replacement. Invalid or inaccessible files produce secret-free errors. Do not overwrite malformed credentials. Provide PowerShell and Bash environment-variable instructions as a fallback. Do not write shell startup files or change the parent shell's environment.
+8. Prompts, reports, and diagnostics must never expose the PAT value. Hidden input must not fall back to echoed input. Config show never includes credentials.
 
 Backward compatibility is not required.
 
@@ -314,6 +315,8 @@ At minimum:
 ```text
 azwi fields --type "User Story"
 azwi config show
+azwi config check [URL]
+azwi setup [URL] [--org ORG]
 azwi config set-defaults --org my-org --project ProjectA
 azwi install-skill
 azwi remove-skill
@@ -321,8 +324,30 @@ azwi remove-skill
 
 Optional but reasonable for v2 if desired:
 
-- `azwi doctor`
 - `azwi version`
+
+## First-time setup and readiness
+
+```text
+uvx azwi setup "https://dev.azure.com/contoso/Payments/_workitems/edit/2195"
+uvx azwi setup --org contoso
+uvx azwi config check
+uvx azwi config check "https://dev.azure.com/contoso/Payments/_workitems/edit/2195"
+```
+
+1. `setup` accepts an optional positional work item URL and `--org`. A conflicting URL organization and `--org` is a usage error.
+2. Support HTTPS `dev.azure.com/<org>/.../_workitems/edit/<id>` and `<org>.visualstudio.com/.../_workitems/edit/<id>` URLs. Reject unrelated hosts, credentials in URLs, nonstandard ports, and invalid IDs. No network request is sent to an arbitrary supplied URL.
+3. Bare interactive setup asks for a work item URL or organization name. Non-interactive setup can use an existing default organization.
+4. Setup resolves the environment override or a saved PAT. Interactive setup prompts for a hidden PAT if neither exists. Explain the plain-text file and inherited permissions before prompting. PAT guidance includes Work Items: Read and Code: Read, a creation link, and this expiration guidance: "Choose an expiration that fits your organization's policy. A longer lifetime reduces renewal interruptions. Use a shorter lifetime when the information or environment calls for it."
+5. `--non-interactive` never prompts. Empty interactive input cancels setup. `--replace-pat` prompts for a replacement saved token. It requires an interactive terminal and an unset AZWI_PAT. There is no command-line PAT value argument.
+6. A supplied URL is verified using the normal default fetch, including comments and linked PR metadata, before saving the organization or an entered PAT. No downloads or PR thread comments are enabled. A failure prevents these setup mutations.
+7. Setup saves the organization through the existing config functions and installs the managed skill by default. `--skills-dir DIR` overrides its root. Existing skill content protections apply. No `--install-skill` flag is needed.
+8. If credentials are missing in non-interactive setup, setup still saves the organization and installs the skill, then returns exit code 4 with `ready: false`, an interactive setup command, and PowerShell and Bash AZWI_PAT instructions. Unreadable or unwritable credential files also produce incomplete readiness and environment fallback guidance. Skill installation failures identify that the organization was already saved.
+9. Setup and config check return deterministic JSON reports by default. Both accept `--format plain`. Prompts and diagnostics go to stderr. Reports never include a PAT.
+10. `config check [URL] [--org ORG]` is read-only and bypasses automatic skill synchronization. It checks the organization, resolved credential availability, and managed skill presence. It reports the credential source and credentials file path without exposing values. It accepts `--skills-dir DIR` and reports all missing prerequisites together with repair commands.
+11. Config check with a URL performs the normal fetch without saving the URL's organization. Without a URL it reports local readiness with verification `not_checked`. A returned linked PR establishes Code access for that resource. Otherwise Code access is `not_verified`.
+12. Missing organization or skill readiness uses exit code 3. Missing authentication uses exit code 4 unless an organization error already takes precedence. Verification failures use the existing fetch error code. Successful checks use exit code 0.
+13. Setup and checks report credential availability only in their current execution environment. Sandboxed, remote, and desktop execution may have different home directories, file access, and environments. Run config check within the agent execution context to test its access.
 
 ## About output
 
@@ -354,7 +379,7 @@ Requirements:
 6. Skill commands write deterministic JSON result objects to stdout and diagnostics to stderr only. `skill status --format plain` also supports plain output. `install-skill`, `remove-skill`, and `skill-status` are aliases.
 7. `$azure-workitem <id>` calls `uvx azwi <id>` and parses the default JSON output.
 8. For supported Azure DevOps Cloud work item URLs, the skill extracts the ID and organization and calls `uvx azwi <id> --org <org>`.
-9. URL parsing belongs to the skill. The public fetch CLI remains `azwi <work_item_id> [options]`.
+9. URL parsing for fetch requests belongs to the skill. Setup and config check also accept URLs. The public fetch CLI remains `azwi <work_item_id> [options]`.
 10. The skill keeps attachment downloads, image downloads, and PR thread comments opt-in, matching the CLI behavior.
 11. If attachment download is requested without a destination, the skill uses `./azwi-<id>-attachments`. A user-supplied destination wins.
 
@@ -365,13 +390,13 @@ The canonical skill is generated from one bundled template. Its UTF-8 text has n
 ```yaml
 metadata:
   managed-by: azwi
-  managed-version: "1.2.0"
+  managed-version: "1.3.0"
   managed-content-sha256: "sha256:<64 lowercase hexadecimal characters>"
 ```
 
 The example hash is schematic. Generation hashes the complete text with the hash field set to `""`, after normalizing line endings to LF and encoding as UTF-8. Verification uses the installed file's own stored hash. Replace only the parsed hash scalar's value in memory. Do not reserialize YAML or compare against the current bundled hash. This detects modifications to body text, front matter, and formatting. It is not a signature or security boundary. Preserve any unrelated supported metadata used by the template. Do not add a top-level version or sidecar files.
 
-Automatic checks run before all normal commands, including no-argument help, fetch, fields, config, help, version, and about output. All skill-management commands skip automatic checks. Inspect only `~/.agents/skills/azure-workitem/SKILL.md`:
+Automatic checks run before normal commands, including no-argument help, fetch, fields, config updates and show, help, version, and about output. Skill-management commands, setup, and config check skip automatic checks. Inspect only `~/.agents/skills/azure-workitem/SKILL.md`:
 
 1. An absent or unmanaged skill is left alone. Never create a missing skill automatically.
 2. A skill is managed when parsed `metadata.managed-by` equals `azwi`. The legacy `<!-- managed-by: azwi -->` marker is also recognized when no conflicting owner is present. New skills omit the legacy marker.
@@ -408,7 +433,7 @@ azwi config add-extra-field --project ProjectB Custom.ReleaseNotes
 
 Requirements:
 
-1. If `~/.azwi/config.toml` does not exist, `azwi config ...` should create it.
+1. Config updates create `~/.azwi/config.toml` if it does not exist. Config show and check are read-only.
 2. Updates should preserve unrelated existing config content where practical.
 3. `azwi config show` should render the effective resolved config in a readable form.
 4. Config commands must never write the PAT into `config.toml`.
@@ -885,6 +910,8 @@ The v2 implementation should include automated tests for:
 10. error classification and exit codes
 11. help and `--about` project/license output
 12. managed skill installation, overwrite, removal, URL guidance, and advanced fetch instructions
+13. setup URL parsing, default skill installation, full-fetch verification, and hidden PAT storage and environment fallback guidance
+14. read-only config checks, environment override and per-organization file authentication, and secret-free diagnostics
 
 Use recorded fixtures or mocked HTTP responses for Azure DevOps API calls.
 
@@ -921,7 +948,7 @@ The implementation is done when all of the following are true:
 12. PATs must not be stored in `config.toml`.
 13. Field mappings support both global defaults and project-specific overrides.
 14. Direct work item fetch is organization-scoped and then resolves the authoritative project from the work item itself.
-15. V2 should not try to persist shell environment variables for the user; future auth persistence should use a secure credential store instead.
+15. Setup saves hidden PAT input in a separate credentials.toml with normal inherited permissions. AZWI_PAT remains an override and a fallback for inaccessible file storage. Setup does not persist shell variables.
 16. Multi-org config support is required in v1, though the common case is a single org.
 17. Relative `--download-images DIR` paths resolve from the current working directory.
 18. JSON should include rendered Markdown text plus source field reference names, not raw HTML.

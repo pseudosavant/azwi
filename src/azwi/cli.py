@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
@@ -8,6 +9,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from azwi import __version__
+from azwi.auth import ORG_HELP, credentials_path, require_pat
+from azwi import onboarding
 from azwi.client import AzureDevOpsClient
 from azwi.config import (
     add_extra_field,
@@ -98,11 +101,35 @@ def run_cli(
     config_path: Path | None,
     client_factory,
     program: str,
+    stdin=None,
 ) -> int:
     args = list(argv)
     try:
         if args and args[0] in {"skill", "install-skill", "remove-skill", "skill-status"}:
             return _run_skill(args, stdout=stdout, program=program)
+        def verify(org, item_id, pat):
+            output = io.StringIO()
+            _run_fetch(
+                [str(item_id), "--org", org], stdout=output, stderr=stderr,
+                env={**env, "AZWI_PAT": pat}, config_path=config_path,
+                client_factory=client_factory, program=program,
+            )
+            payload = json.loads(output.getvalue())
+            return {
+                "status": "verified", "work_item": payload["work_item"],
+                "code_access": "verified" if payload["sections"]["prs"] else "not_verified",
+            }
+        if args and args[0] == "setup":
+            return onboarding.setup(
+                args[1:], stdout=stdout, stderr=stderr, stdin=stdin if stdin is not None else sys.stdin,
+                env=env, config_path=config_path, verify=verify, program=program,
+            )
+        if args[:2] == ["config", "check"]:
+            namespace = _build_config_parser(program).parse_args(args[1:])
+            return onboarding.check(
+                namespace, stdout=stdout, stderr=stderr, env=env,
+                config_path=config_path, verify=verify,
+            )
         sync_skill(stderr=stderr)
         if not args or args[0] in {"-h", "--help"}:
             stdout.write(build_root_help(program))
@@ -146,6 +173,9 @@ def run_cli(
         return exc.exit_code
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 0
+    except KeyboardInterrupt:
+        stderr.write("ERROR: Cancelled.\n")
+        return 2
 
 
 def build_root_help(program: str) -> str:
@@ -155,10 +185,13 @@ def build_root_help(program: str) -> str:
         f"  {program} <work_item_id> [options]\n\n"
         f"azwi - Fetch Azure DevOps work item context for coding agents.\n\n"
         f"Happy path:\n"
+        f"  First run: uvx azwi setup \"WORK_ITEM_URL\"\n"
         f"  {program} <work_item_id>\n"
         f"  Usually the only argument you need is the work item ID.\n"
         f"  Add --org only when no default organization is configured.\n\n"
         f"Commands:\n"
+        f"  {program} setup [URL] [--org ORG]        Configure access and install $azure-workitem\n"
+        f"  {program} config check [URL]             Check setup and optionally verify a work item\n"
         f"  {program} <work_item_id>                 Fetch one work item\n"
         f"  {program} fields --type TYPE             List field reference names for a work item type\n"
         f"  {program} config show                    Show resolved config\n"
@@ -177,7 +210,7 @@ def build_root_help(program: str) -> str:
         f"  --download-images DIR         Requires --output\n"
         f"  --download-attachments DIR    Download work item attachments\n\n"
         f"Env:\n"
-        f"  AZWI_PAT      Azure DevOps personal access token\n"
+        f"  AZWI_PAT      PAT override (otherwise ~/.azwi/credentials.toml)\n"
         f"  AZWI_ORG      Default organization for fetch and fields\n"
         f"  AZWI_PROJECT  Default project for fields\n\n"
         f"Sections:\n"
@@ -213,6 +246,7 @@ def build_fetch_help(program: str) -> str:
         f"  {program} <work_item_id> [options]\n\n"
         f"azwi - Fetch one Azure DevOps work item.\n\n"
         f"Happy path:\n"
+        f"  First run: uvx azwi setup \"WORK_ITEM_URL\"\n"
         f"  {program} <work_item_id>\n"
         f"  Usually the only required argument is the work item ID.\n"
         f"  Add --org only when it is not already available from config or AZWI_ORG.\n\n"
@@ -246,7 +280,7 @@ def build_fetch_help(program: str) -> str:
         f"Sections:\n"
         f"  metadata, description, acceptance, comments, attachments, prs\n\n"
         f"Env:\n"
-        f"  AZWI_PAT      Azure DevOps personal access token\n"
+        f"  AZWI_PAT      PAT override (otherwise ~/.azwi/credentials.toml)\n"
         f"  AZWI_ORG      Default organization for fetch\n"
         f"  AZWI_PROJECT  Ignored by direct work item fetch\n\n"
         f"Exit codes:\n"
@@ -259,7 +293,7 @@ def build_fetch_help(program: str) -> str:
         f"  {program} 2195 --section attachments --download-attachments wi-2195-assets\n"
         f"  {program} 2195 --download-attachments wi-2195-assets --attachment-url URL\n"
         f"  {program} 2195 --section prs --include-pr-comments --pr-comment-status all\n"
-        f"  {program} 2195 --output wi-2195.md --download-images assets\n"
+        f"  {program} 2195 --format markdown --output wi-2195.md --download-images assets\n"
         f"\nProject:\n"
         f"  {PROJECT_URL}\n"
         f"License:\n"
@@ -359,9 +393,9 @@ def _run_fetch(
     raw_config = load_config(config_path or default_config_path())
     initial_config = resolve_config(raw_config, env=env, cli_org=namespace.org)
     if not initial_config.org:
-        raise ConfigError("Organization is required. Use --org, config defaults, or AZWI_ORG.")
+        raise ConfigError(ORG_HELP)
 
-    client = client_factory(initial_config.org, env.get("AZWI_PAT", ""), verbose=namespace.verbose, stderr=stderr)
+    client = client_factory(initial_config.org, require_pat(env, initial_config.org, credentials_path(config_path)), verbose=namespace.verbose, stderr=stderr)
     progress = ProgressReporter(stderr, enabled=_should_show_progress(stderr=stderr, verbose=namespace.verbose))
     try:
         progress.update(f"Fetching work item {namespace.work_item_id}")
@@ -485,11 +519,11 @@ def _run_fields(
     raw_config = load_config(config_path or default_config_path())
     resolved = resolve_config(raw_config, env=env, cli_org=namespace.org, cli_project=namespace.project)
     if not resolved.org:
-        raise ConfigError("Organization is required. Use --org, config defaults, or AZWI_ORG.")
+        raise ConfigError(ORG_HELP)
     if not resolved.project:
         raise ConfigError("Project is required for fields. Use --project, config defaults, or AZWI_PROJECT.")
 
-    client = client_factory(resolved.org, env.get("AZWI_PAT", ""), verbose=namespace.verbose, stderr=stderr)
+    client = client_factory(resolved.org, require_pat(env, resolved.org, credentials_path(config_path)), verbose=namespace.verbose, stderr=stderr)
     response = client.get_work_item_type_fields(resolved.project, namespace.type)
     items = response.get("value")
     if not isinstance(items, list):
@@ -623,6 +657,12 @@ def _build_config_parser(program: str) -> argparse.ArgumentParser:
         description="Manage ~/.azwi/config.toml.",
     )
     subparsers = parser.add_subparsers(dest="config_command", required=True)
+
+    check = subparsers.add_parser("check", help="check access and skill readiness without changing files")
+    check.add_argument("url", nargs="?", help="work item URL to verify with a full default fetch")
+    check.add_argument("--org", help="organization override")
+    check.add_argument("--skills-dir", type=Path, help="skills root (default: ~/.agents/skills)")
+    check.add_argument("--format", choices=["json", "plain"], default="json", help="result format (default: json)")
 
     show = subparsers.add_parser("show", formatter_class=CompactHelpFormatter, help="show effective resolved config")
     show.add_argument("--org", help="resolve config for this organization")

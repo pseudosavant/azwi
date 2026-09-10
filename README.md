@@ -8,38 +8,88 @@ The CLI is designed for both people and agents. Successful output stays on stdou
 
 `azwi` is designed to be used with [`uv`](https://docs.astral.sh/uv/getting-started/installation/). Install `uv` before continuing. The documented workflows and managed agent skill use `uvx` to run the tool without requiring a global installation.
 
-You also need an Azure DevOps PAT with these scopes:
-
-- Work Items: Read
-- Code: Read
-
-Set the PAT in `AZWI_PAT`. For example, in PowerShell:
-
-```powershell
-$env:AZWI_PAT = "<your-pat>"
-```
-
-In Bash or zsh:
-
-```bash
-export AZWI_PAT="<your-pat>"
-```
-
-The PAT is never stored in `~/.azwi/config.toml`.
-
 ## Quick start with an agent
 
-Install the managed agent skill:
+1. Install `uv` using the link above.
+2. Create an Azure DevOps personal access token for your organization with **Work Items: Read** and **Code: Read**.
+3. Run setup using the PowerShell or Bash commands below and enter the PAT at the hidden terminal prompt. Replace the example URL with a work item you can access.
+4. Use `$azure-workitem` in your agent.
+
+To create the PAT, open Azure DevOps **User settings > Personal access tokens**. See [Microsoft's PAT instructions](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate).
+
+Choose an expiration that fits your organization's policy. A longer lifetime reduces renewal interruptions. Use a shorter lifetime when the information or environment calls for it.
+
+PowerShell:
 
 ```powershell
-uvx azwi skill install
+uvx azwi setup "https://dev.azure.com/my-org/Payments/_workitems/edit/2195"
 ```
+
+Bash or zsh:
+
+```bash
+uvx azwi setup "https://dev.azure.com/my-org/Payments/_workitems/edit/2195"
+```
+
+Setup extracts and saves your organization, verifies the supplied work item through a normal fetch, and installs the managed agent skill. Setup saves the PAT in `~/.azwi/credentials.toml`, separately from non-secret settings in `~/.azwi/config.toml`. If `AZWI_PAT` is already set, setup uses it without saving its value. No separate test fetch is needed.
+
+Bare `uvx azwi setup` asks for a work item URL or organization name. You can also use `uvx azwi setup --org my-org`. An organization-only setup configures local defaults but does not verify a work item. No project default is required.
 
 Then use `$azure-workitem` in Codex, Claude Code, or another agent harness that supports skills:
 
-> Use $azure-workitem to inspect https://dev.azure.com/my-org/Payments/_workitems/edit/2195. Summarize the requested change, acceptance criteria, and any relevant pull request discussion.
+> Use $azure-workitem to inspect 2195. Summarize the requested change, acceptance criteria, and any relevant pull request discussion.
 
-The skill accepts a numeric work item ID or a supported Azure DevOps Cloud work item URL. It fetches the work item with `uvx azwi`, parses the default JSON output, and requests high-volume details such as PR comments or downloads only when needed.
+The skill accepts numeric IDs and supported Azure DevOps Cloud URLs. It requests PR comments and downloads only when needed. Start a new agent session if the installed skill is not yet available.
+
+### Credentials and environment overrides
+
+Saved credentials use one PAT per organization:
+
+```toml
+[orgs."my-org"]
+pat = "<your-pat>"
+```
+
+Setup creates this file for you. It stores the PAT as plain text with normal inherited filesystem permissions. It does not apply special restrictions or change ACLs. Keep it out of repositories and shared config exports. `config show`, setup reports, and diagnostics never display saved PATs.
+
+A non-empty `AZWI_PAT` overrides the saved token. This also works if the credentials file is unavailable or malformed. If file storage is unavailable, set the variable in the environment where azwi runs:
+
+PowerShell:
+
+```powershell
+$env:AZWI_PAT = "<your-pat>"
+uvx azwi setup "https://dev.azure.com/my-org/Payments/_workitems/edit/2195"
+```
+
+Bash or zsh:
+
+```bash
+export AZWI_PAT="<your-pat>"
+uvx azwi setup "https://dev.azure.com/my-org/Payments/_workitems/edit/2195"
+```
+
+These assignments affect the current shell and its child processes. An already-running agent application does not receive the change. Configure the environment where the agent actually executes `uvx`, including remote or sandboxed environments. Setup cannot change its parent shell's environment. Do not paste the PAT into an agent conversation.
+
+On Windows, you can optionally persist the current value for your own account without administrator rights:
+
+```powershell
+[Environment]::SetEnvironmentVariable("AZWI_PAT", $env:AZWI_PAT, "User")
+```
+
+Future applications must inherit the updated environment. On Linux and macOS, persistent shell variables usually belong in the appropriate user shell startup file. Bash login shells and interactive shells read different files. Shell configuration does not automatically configure every desktop application. Persisting an environment variable this way stores the PAT as an ordinary setting. Environment variables are not encrypted secret storage.
+
+### Check or repair setup
+
+```powershell
+uvx azwi config check
+uvx azwi config check "https://dev.azure.com/my-org/Payments/_workitems/edit/2195"
+```
+
+`config check` is read-only and reports the effective organization and its source, the credential source (`environment`, `file`, `missing`, or `unavailable`) and credentials file path, skill status, and exact next steps. With a URL it also runs a default fetch. Without a URL it only checks local readiness. Run it through the agent when diagnosing differences between terminal and agent access. A verified work item without returned linked PRs does not establish Code access.
+
+If a saved PAT expires or is rejected, run `uvx azwi setup "<work-item-url>" --replace-pat` in your terminal. Setup verifies the replacement before saving it. If you use `AZWI_PAT`, update its value in the execution environment instead. Unset it before using `--replace-pat`. Make sure the token applies to the selected organization and has both required scopes.
+
+Setup and checks return JSON by default. Add `--format plain` for a compact text report. Setup installs the skill by default and respects existing managed-skill protections. Use `--skills-dir DIR` with either command for a custom skill root. `setup --non-interactive` never prompts. It uses `AZWI_PAT` or the saved PAT for the selected organization. If both are missing, setup saves the organization and installs the skill, then returns exit code 4 with `ready: false` and repair instructions. Run interactive setup or set the variable and rerun setup to verify the work item. A failure to save an entered PAT also returns incomplete readiness and environment-variable instructions. Sandboxed and remote agents need access to the same credentials file or their own `AZWI_PAT`. Run `config check` through the agent to verify its access.
 
 ## What it returns
 
@@ -174,7 +224,7 @@ uvx azwi config set-field --project Payments --description Custom.DevDescription
 uvx azwi config add-extra-field --project Payments Custom.ReleaseNotes
 ```
 
-`config show` displays the effective resolved configuration. Config commands create the file when needed and never write `AZWI_PAT` into it.
+`config show` displays the effective resolved configuration. Config updates create the file when needed and never write `AZWI_PAT` into it. `config check` does not create or update files.
 
 Settings are resolved in this order:
 
@@ -317,6 +367,8 @@ uvx azwi --help
 uvx azwi 2195 --help
 uvx azwi fields --help
 uvx azwi config --help
+uvx azwi setup --help
+uvx azwi config check --help
 uvx azwi skill --help
 uvx azwi --about
 uvx azwi version
@@ -326,7 +378,7 @@ Environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `AZWI_PAT` | Azure DevOps personal access token |
+| `AZWI_PAT` | Azure DevOps PAT override. Otherwise use the selected organization's saved PAT |
 | `AZWI_ORG` | Default organization for fetch and fields |
 | `AZWI_PROJECT` | Default project for project-scoped commands such as `fields` |
 
@@ -363,14 +415,14 @@ Run the tests and build the distribution:
 ```powershell
 uv run python -m unittest discover -s tests -v
 uv build --no-sources
-uv run python tests/wheel_smoke.py dist/azwi-1.2.0-py3-none-any.whl
+uv run python tests/wheel_smoke.py dist/azwi-1.3.0-py3-none-any.whl
 ```
 
 The wheel smoke check uses temporary environments and a temporary home directory. It validates wheel packaging, index-style metadata, local and editable installs, `uvx`, and the PEP 723 wrapper. It requires access to build and runtime dependencies.
 
 To release a version:
 
-1. Tag a release such as `v1.2.0`.
+1. Tag a release such as `v1.3.0`.
 2. Let GitHub Actions build the package.
 3. Publish to PyPI using Trusted Publishing.
 

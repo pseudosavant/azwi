@@ -1,4 +1,4 @@
-"""Run with: python tests/wheel_smoke.py dist/azwi-1.2.0-py3-none-any.whl."""
+"""Run with: python tests/wheel_smoke.py dist/azwi-1.3.0-py3-none-any.whl."""
 
 from __future__ import annotations
 
@@ -20,6 +20,10 @@ def main() -> None:
     with zipfile.ZipFile(wheel) as archive:
         assert "azwi/skill.py" in archive.namelist()
         assert "azwi/runtime.py" in archive.namelist()
+        assert "azwi/_keyring.py" not in archive.namelist()
+        assert not any("keyring" in dependency.lower() for dependency in project["dependencies"])
+        assert "azwi/auth.py" in archive.namelist()
+        assert "azwi/onboarding.py" in archive.namelist()
         assert any(name.endswith("/licenses/LICENSE") for name in archive.namelist())
 
     with tempfile.TemporaryDirectory(prefix="azwi-wheel-smoke-") as temporary:
@@ -30,8 +34,13 @@ def main() -> None:
         environment.update(HOME=str(home), USERPROFILE=str(home), UV_TOOL_DIR=str(workspace / "tools"))
         environment.pop("PYTHONPATH", None)
         environment.pop("VIRTUAL_ENV", None)
+        environment.pop("RUST_LOG", None)
+        environment["AZWI_PAT"] = "wheel-smoke-nonsecret"
 
         def run(*args: object, cwd: Path = workspace) -> subprocess.CompletedProcess[str]:
+            if args[0] == "uvx":
+                # Locally rebuilt wheels can share a version with an older run.
+                args = (args[0], "--no-cache", "--quiet", *args[1:])
             result = subprocess.run(
                 [str(arg) for arg in args], cwd=cwd, env=environment,
                 capture_output=True, text=True, encoding="utf-8", timeout=120,
@@ -90,7 +99,9 @@ print(skill.render_skill(), end="")
         # Install by distribution name from a local wheel listing. This exercises
         # index-style metadata without querying a package index for azwi.
         run("uv", "pip", "uninstall", "--python", python, "azwi")
-        run("uv", "pip", "install", "--python", python, "--no-index", "--no-deps", "--find-links", wheel.parent, f"azwi=={version}")
+        # Development wheels may reuse a version while their contents change.
+        # Read this wheel listing instead of a cached build with that version.
+        run("uv", "pip", "install", "--no-cache", "--python", python, "--no-index", "--no-deps", "--find-links", wheel.parent, f"azwi=={version}")
         info = runtime_info()
         assert info["direct_url"] is None
         assert info["local"] is False
@@ -106,7 +117,7 @@ print(skill.render_skill(), end="")
             assert runtime_info()["local"] is True
             older = write_older_skill()
             result = run(python, "-m", "azwi", "--version")
-            assert result.stderr == ""
+            assert result.stderr == "", result.stderr
             assert path.read_bytes() == older
             result = run(python, "-m", "azwi", "skill", "install")
             assert json.loads(result.stdout)["updated"] is True
@@ -121,16 +132,40 @@ print(skill.render_skill(), end="")
             result = run("uvx", "--from", source, "azwi", "skill", "install")
             assert json.loads(result.stdout)["updated"] is True
             assert path.read_bytes() == canonical
+            result = run("uvx", "--from", source, "azwi", "setup", "--org", "wheel-smoke", "--non-interactive")
+            report = json.loads(result.stdout)
+            assert report["ready"] is True
+            assert report["credential_source"] == "environment"
+            assert report["verification"]["status"] == "not_checked"
+            result = run("uvx", "--from", source, "azwi", "config", "check")
+            assert json.loads(result.stdout)["ready"] is True
+            assert result.stderr == ""
         print("uvx wheel and local-source skill commands: passed")
+
+        run(python, "-c", "from azwi.auth import credentials_path, save_credential; save_credential('wheel-smoke', 'file-smoke-nonsecret', credentials_path())")
+        environment.pop("AZWI_PAT")
+        for source in (wheel, repository):
+            result = run("uvx", "--from", source, "azwi", "config", "check")
+            report = json.loads(result.stdout)
+            assert report["ready"] is True and report["credential_source"] == "file"
+            assert result.stderr == ""
+            assert "file-smoke-nonsecret" not in result.stdout
+        print("uvx saved credentials without AZWI_PAT: passed")
 
         older = write_older_skill()
         result = run("uv", "run", "./azwi.py", "--help", cwd=repository)
         assert "azwi <work_item_id> [options]" in result.stdout
         assert "--repo" not in result.stdout
         assert path.read_bytes() == older
+        result = run("uv", "run", "./azwi.py", "setup", "--org", "wheel-smoke", "--non-interactive", cwd=repository)
+        assert json.loads(result.stdout)["ready"] is True
+        result = run("uv", "run", "./azwi.py", "config", "check", cwd=repository)
+        assert json.loads(result.stdout)["ready"] is True
+        assert json.loads(result.stdout)["credential_source"] == "file"
+        assert result.stderr == ""
         result = run("uv", "run", "./azwi.py", "skill", "status", cwd=repository)
         assert json.loads(result.stdout)["local_development_build"] is True
-        assert path.read_bytes() == older
+        assert path.read_bytes() == canonical
         print("PEP 723 wrapper and development isolation: passed")
 
 

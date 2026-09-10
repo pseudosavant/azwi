@@ -28,15 +28,21 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     config_path = path if path is not None else default_config_path()
     if not config_path.exists():
         return {}
-    with config_path.open("rb") as handle:
-        data = tomllib.load(handle)
+    try:
+        with config_path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, ValueError):
+        raise ConfigError(f"Cannot read config at {config_path}. Check file access and TOML syntax.") from None
     return data if isinstance(data, dict) else {}
 
 
 def save_config(data: Mapping[str, Any], path: Path | None = None) -> Path:
     config_path = path if path is not None else default_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(dumps_toml(dict(data)), encoding="utf-8", newline="\n")
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(dumps_toml(dict(data)), encoding="utf-8", newline="\n")
+    except OSError:
+        raise ConfigError(f"Cannot write config at {config_path}. Check directory and file permissions.") from None
     return config_path
 
 
