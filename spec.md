@@ -45,7 +45,7 @@ These points should drive the v2 design.
 ## Non-goals
 
 1. Full Azure DevOps CRUD support.
-2. Browser sign-in or automatic PAT creation. Setup may prompt for a work item URL, organization, and hidden PAT.
+2. Browser sign-in or automatic PAT creation. Setup may prompt for a work item URL, organization, and masked PAT.
 3. Rich terminal UI.
 4. Maintaining byte-for-byte output compatibility with v1.
 
@@ -154,10 +154,10 @@ PAT storage policy:
 2. `config.toml` is for non-secret defaults only.
 3. Do not persist or retrieve PATs through OS credential stores.
 4. Do not add a command that attempts to persistently set shell environment variables for the user across platforms.
-5. Interactive setup may prompt for a hidden PAT and save it in `~/.azwi/credentials.toml`. Store each PAT under `[orgs."<lowercase-org>"]` as a `pat` string. Preserve other organizations on replacement. Do not copy an environment PAT to disk automatically.
+5. Interactive setup may prompt for a masked PAT and save it in `~/.azwi/credentials.toml`. Store each PAT under `[orgs."<lowercase-org>"]` as a `pat` string. Preserve other organizations on replacement. Do not copy an environment PAT to disk automatically.
 6. Create the credentials file using ordinary inherited ACLs and the process umask. Do not apply current-user-only restrictions, chmod, or custom ACLs. Store it as plain text, independently of non-secret config.
 7. Save with a temporary sibling file and atomic replacement. Invalid or inaccessible files produce secret-free errors. Do not overwrite malformed credentials. Provide PowerShell and Bash environment-variable instructions as a fallback. Do not write shell startup files or change the parent shell's environment.
-8. Prompts, reports, and diagnostics must never expose the PAT value. Hidden input must not fall back to echoed input. Config show never includes credentials.
+8. Prompts, reports, and diagnostics must never expose the PAT value. PAT input displays asterisks and must never fall back to displaying the actual characters. Masking must work on all supported Python versions. Config show never includes credentials.
 
 Backward compatibility is not required.
 
@@ -338,7 +338,7 @@ uvx azwi config check "https://dev.azure.com/contoso/Payments/_workitems/edit/21
 1. `setup` accepts an optional positional work item URL and `--org`. A conflicting URL organization and `--org` is a usage error.
 2. Support HTTPS `dev.azure.com/<org>/.../_workitems/edit/<id>` and `<org>.visualstudio.com/.../_workitems/edit/<id>` URLs. Reject unrelated hosts, credentials in URLs, nonstandard ports, and invalid IDs. No network request is sent to an arbitrary supplied URL.
 3. Bare interactive setup asks for a work item URL or organization name. Non-interactive setup can use an existing default organization.
-4. Setup resolves the environment override or a saved PAT. Interactive setup prompts for a hidden PAT if neither exists. Explain the plain-text file and inherited permissions before prompting. PAT guidance includes Work Items: Read and Code: Read, a creation link, and this expiration guidance: "Choose an expiration that fits your organization's policy. A longer lifetime reduces renewal interruptions. Use a shorter lifetime when the information or environment calls for it."
+4. Setup resolves the environment override or a saved PAT. Interactive setup prompts for a masked PAT if neither exists. Explain the plain-text file and inherited permissions before prompting. Separate permissions, expiration guidance, the instructions link, the storage path, and the input prompt with line breaks and blank lines. PAT guidance includes Work Items: Read and Code: Read, a creation link, and this expiration guidance: "Choose an expiration that fits your organization's policy. A longer lifetime reduces renewal interruptions. Use a shorter lifetime when the information or environment calls for it."
 5. `--non-interactive` never prompts. Empty interactive input cancels setup. `--replace-pat` prompts for a replacement saved token. It requires an interactive terminal and an unset AZWI_PAT. There is no command-line PAT value argument.
 6. A supplied URL is verified using the normal default fetch, including comments and linked PR metadata, before saving the organization or an entered PAT. No downloads or PR thread comments are enabled. A failure prevents these setup mutations.
 7. Setup saves the organization through the existing config functions and installs the managed skill by default. `--skills-dir DIR` overrides its root. Existing skill content protections apply. No `--install-skill` flag is needed.
@@ -390,7 +390,7 @@ The canonical skill is generated from one bundled template. Its UTF-8 text has n
 ```yaml
 metadata:
   managed-by: azwi
-  managed-version: "1.3.0"
+  managed-version: "1.3.1"
   managed-content-sha256: "sha256:<64 lowercase hexadecimal characters>"
 ```
 
@@ -910,7 +910,7 @@ The v2 implementation should include automated tests for:
 10. error classification and exit codes
 11. help and `--about` project/license output
 12. managed skill installation, overwrite, removal, URL guidance, and advanced fetch instructions
-13. setup URL parsing, default skill installation, full-fetch verification, and hidden PAT storage and environment fallback guidance
+13. setup URL parsing, default skill installation, full-fetch verification, and masked PAT storage and environment fallback guidance
 14. read-only config checks, environment override and per-organization file authentication, and secret-free diagnostics
 
 Use recorded fixtures or mocked HTTP responses for Azure DevOps API calls.
@@ -948,7 +948,7 @@ The implementation is done when all of the following are true:
 12. PATs must not be stored in `config.toml`.
 13. Field mappings support both global defaults and project-specific overrides.
 14. Direct work item fetch is organization-scoped and then resolves the authoritative project from the work item itself.
-15. Setup saves hidden PAT input in a separate credentials.toml with normal inherited permissions. AZWI_PAT remains an override and a fallback for inaccessible file storage. Setup does not persist shell variables.
+15. Setup saves masked PAT input in a separate credentials.toml with normal inherited permissions. AZWI_PAT remains an override and a fallback for inaccessible file storage. Setup does not persist shell variables.
 16. Multi-org config support is required in v1, though the common case is a single org.
 17. Relative `--download-images DIR` paths resolve from the current working directory.
 18. JSON should include rendered Markdown text plus source field reference names, not raw HTML.

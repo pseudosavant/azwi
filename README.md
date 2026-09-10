@@ -12,7 +12,7 @@ The CLI is designed for both people and agents. Successful output stays on stdou
 
 1. Install `uv` using the link above.
 2. Create an Azure DevOps personal access token for your organization with **Work Items: Read** and **Code: Read**.
-3. Run setup using the PowerShell or Bash commands below and enter the PAT at the hidden terminal prompt. Replace the example URL with a work item you can access.
+3. Run setup using the PowerShell or Bash commands below and enter the PAT at the terminal prompt with asterisk masking. Replace the example URL with a work item you can access.
 4. Use `$azure-workitem` in your agent.
 
 To create the PAT, open Azure DevOps **User settings > Personal access tokens**. See [Microsoft's PAT instructions](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate).
@@ -415,14 +415,14 @@ Run the tests and build the distribution:
 ```powershell
 uv run python -m unittest discover -s tests -v
 uv build --no-sources
-uv run python tests/wheel_smoke.py dist/azwi-1.3.0-py3-none-any.whl
+uv run python tests/wheel_smoke.py dist/azwi-1.3.1-py3-none-any.whl
 ```
 
 The wheel smoke check uses temporary environments and a temporary home directory. It validates wheel packaging, index-style metadata, local and editable installs, `uvx`, and the PEP 723 wrapper. It requires access to build and runtime dependencies.
 
 To release a version:
 
-1. Tag a release such as `v1.3.0`.
+1. Tag a release such as `v1.3.1`.
 2. Let GitHub Actions build the package.
 3. Publish to PyPI using Trusted Publishing.
 

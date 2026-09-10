@@ -126,7 +126,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("no saved PAT is available", err)
 
     def test_prompted_pat_is_saved_and_works_in_fresh_environment(self):
-        with patch("azwi.onboarding.getpass.getpass", return_value=TOKEN) as prompt:
+        with patch("azwi.onboarding.read_masked_pat", return_value=TOKEN) as prompt:
             code, out, err = self.run_command(self.setup_args(URL), stdin=Terminal())
         self.assertEqual(code, 0, err)
         prompt.assert_called_once()
@@ -158,7 +158,7 @@ class OnboardingTests(unittest.TestCase):
         class DeniedClient(FakeClient):
             def get_work_item(self, work_item_id):
                 raise AuthError("Test access denied")
-        with patch("azwi.onboarding.getpass.getpass", return_value=TOKEN):
+        with patch("azwi.onboarding.read_masked_pat", return_value=TOKEN):
             code, out, err = self.run_command(self.setup_args(URL, "--replace-pat"), stdin=Terminal(), client=DeniedClient)
         self.assertEqual(code, 4)
         self.assertFalse(self.config.exists())
@@ -168,7 +168,7 @@ class OnboardingTests(unittest.TestCase):
         credentials = self.root / "credentials.toml"
         save_credential("contoso", "old-token", credentials)
         save_credential("other", "other-token", credentials)
-        with patch("azwi.onboarding.getpass.getpass", return_value=TOKEN):
+        with patch("azwi.onboarding.read_masked_pat", return_value=TOKEN):
             code, out, err = self.run_command(self.setup_args(URL, "--replace-pat"), stdin=Terminal())
         self.assertEqual(code, 0, err)
         self.assertEqual(require_pat({}, "contoso", credentials), TOKEN)
@@ -190,7 +190,7 @@ class OnboardingTests(unittest.TestCase):
             if destination == credentials:
                 raise PermissionError
             return replace(source, destination)
-        with patch("azwi.onboarding.getpass.getpass", return_value=TOKEN), patch("azwi.auth.os.replace", side_effect=fail_credentials):
+        with patch("azwi.onboarding.read_masked_pat", return_value=TOKEN), patch("azwi.auth.os.replace", side_effect=fail_credentials):
             code, out, err = self.run_command(self.setup_args(URL), stdin=Terminal())
         self.assertEqual(code, 4)
         self.assertFalse(json.loads(out)["ready"])
@@ -212,11 +212,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(credentials.read_bytes(), before)
 
     def test_hidden_input_unavailable_does_not_fall_back_to_echo(self):
-        import getpass
-        with patch("azwi.onboarding.getpass.getpass", side_effect=getpass.GetPassWarning):
+        with patch("azwi.onboarding.read_masked_pat", side_effect=OSError):
             code, out, err = self.run_command(self.setup_args(URL), stdin=Terminal())
         self.assertEqual(code, 4)
-        self.assertIn("Hidden PAT input is unavailable", err)
+        self.assertIn("Masked PAT input is unavailable", err)
         self.assertFalse((self.root / "credentials.toml").exists())
 
     def test_repeated_setup_preserves_other_config_and_skill(self):

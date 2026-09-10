@@ -1,4 +1,4 @@
-"""Run with: python tests/wheel_smoke.py dist/azwi-1.3.0-py3-none-any.whl."""
+"""Run with: python tests/wheel_smoke.py dist/azwi-1.3.1-py3-none-any.whl."""
 
 from __future__ import annotations
 

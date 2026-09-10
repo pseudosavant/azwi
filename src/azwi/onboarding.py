@@ -1,17 +1,33 @@
 from __future__ import annotations
 
 import argparse
-import getpass
+from contextlib import closing
 import json
 import re
-import warnings
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from azwi.auth import Credential, ORG_HELP, PAT_SCOPES, PAT_EXPIRATION, PAT_HELP_URL, credentials_path, missing_pat_message, resolve_credential, save_credential
+from azwi.auth import Credential, ORG_HELP, PAT_EXPIRATION, PAT_HELP_URL, credentials_path, missing_pat_message, resolve_credential, save_credential
 from azwi.config import default_config_path, load_config, resolve_config, save_config, set_defaults
 from azwi.errors import AuthError, AzwiError, ConfigError, UsageError
 from azwi.skill import install_skill, skill_status
+
+
+def read_masked_pat(stdin, stderr) -> str:
+    # Import only for interactive setup. Keep normal agent commands lightweight.
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import DummyHistory
+    from prompt_toolkit.input import create_input
+    from prompt_toolkit.output import create_output
+
+    if not stdin.isatty() or not stderr.isatty():
+        raise OSError("Masked input requires a terminal")
+    with closing(create_input(stdin=stdin)) as terminal_input:
+        session = PromptSession(
+            input=terminal_input, output=create_output(stdout=stderr),
+            history=DummyHistory(), is_password=True, enable_suspend=False,
+        )
+        return session.prompt("PAT: ")
 
 
 def normalize_org(value: str) -> str:
@@ -156,17 +172,19 @@ def setup(argv, *, stdout, stderr, stdin, env, config_path, verify, program) -> 
     entered_pat = None
     if not issues and interactive and (not credential.pat or namespace.replace_pat):
         stderr.write(
-            f"Create a PAT with {PAT_SCOPES}.\n{PAT_EXPIRATION}\n"
-            f"PAT instructions: {PAT_HELP_URL}\n"
-            f"The PAT will be saved as plain text in {credential_path} with normal inherited permissions.\n"
+            "\nCreate a PAT with these permissions:\n"
+            "  - Work Items: Read\n  - Code: Read\n\n"
+            + PAT_EXPIRATION.replace(". ", ".\n") + "\n\n"
+            f"PAT instructions:\n  {PAT_HELP_URL}\n\n"
+            "The PAT will be saved as plain text with normal inherited permissions:\n"
+            f"  {credential_path}\n\n"
+            "Paste your PAT, then press Enter. Input is masked with asterisks.\n"
         )
         stderr.flush()
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", getpass.GetPassWarning)
-                entered_pat = getpass.getpass("PAT (hidden): ", stream=stderr).strip()
-        except (EOFError, OSError, getpass.GetPassWarning):
-            raise AuthError("Hidden PAT input is unavailable. " + missing_pat_message()) from None
+            entered_pat = read_masked_pat(stdin, stderr).strip()
+        except (EOFError, OSError):
+            raise AuthError("Masked PAT input is unavailable. " + missing_pat_message()) from None
         if not entered_pat:
             raise UsageError("Setup cancelled. No PAT was entered.")
         credential = Credential(entered_pat, "input")

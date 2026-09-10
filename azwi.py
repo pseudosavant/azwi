@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["packaging>=23.2", "PyYAML>=6.0"]
+# dependencies = ["packaging>=23.2", "PyYAML>=6.0", "prompt-toolkit>=3.0.52,<4"]
 # ///
 
 from __future__ import annotations
