@@ -39,9 +39,9 @@ Use `uvx azwi` to fetch deterministic Azure DevOps work item context. Default ou
 
 ## Resolve The Input
 
-- For a numeric ID, use it directly: `uvx azwi <id>`.
-- For `https://dev.azure.com/<org>/.../_workitems/edit/<id>`, extract the numeric segment immediately after `_workitems/edit/` and call `uvx azwi <id> --org "<org>"`.
-- For `https://<org>.visualstudio.com/.../_workitems/edit/<id>`, extract the same numeric segment and call `uvx azwi <id> --org "<org>"`.
+- For a numeric ID, use it directly: `uvx azwi <id> --non-interactive`.
+- For `https://dev.azure.com/<org>/.../_workitems/edit/<id>`, extract the numeric segment immediately after `_workitems/edit/` and call `uvx azwi <id> --org "<org>" --non-interactive`.
+- For `https://<org>.visualstudio.com/.../_workitems/edit/<id>`, extract the same numeric segment and call `uvx azwi <id> --org "<org>" --non-interactive`.
 - Reject unrelated URLs or ambiguous numbers instead of guessing.
 
 For fetches, keep URL handling in the skill. The `azwi` fetch command itself accepts a numeric work item ID. Setup and config checks also accept work item URLs.
@@ -51,23 +51,23 @@ For fetches, keep URL handling in the skill. The `azwi` fetch command itself acc
 Fetch the default JSON payload:
 
 ```text
-uvx azwi <id>
+uvx azwi <id> --non-interactive
 ```
 
 Use `--org "<org>"` when the input URL supplies the organization. Summarize the fields relevant to the request and preserve useful work item or PR links. Use `--format markdown` only when the user asks for Markdown or prompt-ready raw context.
 
-Authentication uses a non-empty `AZWI_PAT` first, then the selected organization's saved PAT in `~/.azwi/credentials.toml`. Let azwi read credentials internally. Resolve the organization from `--org`, `AZWI_ORG`, or `~/.azwi/config.toml`. Never read or print the credentials file through agent tools, copy PAT values into config or generated files, or ask the user to paste a PAT into the conversation.
+Authentication uses a non-empty `AZWI_PAT` first, then the organization's configured method. Managed and manual PATs use `~/.azwi/credentials.toml`. Entra mode uses the Azure CLI session. Always pass `--non-interactive` for fetch and fields commands, even when a pseudo-terminal is available. Let azwi read credentials internally. Resolve the organization from `--org`, `AZWI_ORG`, or `~/.azwi/config.toml`. Never read or print the credentials file through agent tools, copy PAT values into config or generated files, or ask the user to paste a PAT into the conversation.
 
-For first-time setup, direct the user to run `uvx azwi setup "<work-item-url>"` in their terminal. It saves the organization, prompts for a masked PAT when needed, verifies the work item, saves the PAT in the separate credentials file, and installs this skill by default. For an expired saved token, direct the user to run setup with `--replace-pat` in their terminal. AZWI_PAT overrides the file and must be unset before replacing a saved PAT.
+For first-time setup, direct the user to run `uvx azwi setup "<work-item-url>"` in their terminal. It offers managed PAT, temporary Entra tokens, a masked manual PAT, or environment authentication. Azure CLI sign-in runs in the user terminal and setup resumes automatically. Setup verifies access, saves the configuration, and installs this skill. For managed PAT or Entra sign-in repair, direct the user to rerun setup in their terminal. For an expired manual PAT, add `--replace-pat`. AZWI_PAT overrides saved authentication and must be unset before configuring another method. Never start `az login` or copy Azure CLI tokens through agent tools.
 
-For missing configuration or credentials, run `uvx azwi config check` or `uvx azwi config check "<work-item-url>"` to report readiness and next steps. Checks are read-only. A terminal and a sandboxed or remote agent can have different home directories, file access, or environment variables. Do not run interactive setup inside a non-interactive agent command. `setup --non-interactive` never prompts. It uses AZWI_PAT or saved credentials. If file access is unavailable, direct the user to configure AZWI_PAT in the execution environment.
+For missing configuration or credentials, run `uvx azwi config check` or `uvx azwi config check "<work-item-url>"` to report readiness and next steps. Checks do not modify azwi files, launch sign-in, or renew PATs. A URL check in Entra mode may silently acquire a token and let Azure CLI update its own cache. A terminal and a sandboxed or remote agent can have different home directories, file access, or environment variables. Do not run interactive setup inside a non-interactive agent command. `setup --non-interactive` never prompts. It can use AZWI_PAT, saved PATs, or a usable Azure CLI session for an explicitly selected or already configured Azure CLI method. If file access is unavailable, direct the user to configure AZWI_PAT in the execution environment.
 
 ## Comments And Pull Requests
 
 The default fetch includes normal work item comments, attachment metadata, and linked PR metadata. Keep the current opt-in behavior for higher-volume PR thread data:
 
 ```text
-uvx azwi <id> --section prs --include-pr-comments
+uvx azwi <id> --section prs --include-pr-comments --non-interactive
 ```
 
 - Add `--pr-comment-status all` only when active and resolved PR threads are requested.
@@ -79,14 +79,14 @@ uvx azwi <id> --section prs --include-pr-comments
 Download attachments only when requested. If the user supplies a folder, use it. Otherwise use `./azwi-<id>-attachments`:
 
 ```text
-uvx azwi <id> --download-attachments "./azwi-<id>-attachments"
+uvx azwi <id> --download-attachments "./azwi-<id>-attachments" --non-interactive
 ```
 
 To download selected attachments, first read the exact attachment names or URLs from the JSON metadata, then use repeatable exact-match selectors:
 
 ```text
-uvx azwi <id> --download-attachments "<dir>" --attachment-name "<name>"
-uvx azwi <id> --download-attachments "<dir>" --attachment-url "<url>"
+uvx azwi <id> --download-attachments "<dir>" --attachment-name "<name>" --non-interactive
+uvx azwi <id> --download-attachments "<dir>" --attachment-url "<url>" --non-interactive
 ```
 
 Do not download attachments merely because attachment metadata is present.
@@ -96,7 +96,7 @@ Do not download attachments merely because attachment metadata is present.
 Download rendered text images only when requested. `--download-images` requires `--output`:
 
 ```text
-uvx azwi <id> --format markdown --output "azwi-<id>.md" --download-images "azwi-<id>-images"
+uvx azwi <id> --format markdown --output "azwi-<id>.md" --download-images "azwi-<id>-images" --non-interactive
 ```
 
 Do not add `--force` unless overwriting the output is explicitly allowed.

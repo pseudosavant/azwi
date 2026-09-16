@@ -1,0 +1,39 @@
+[
+  {
+    "name": "create_disposable_pat",
+    "seconds": 0.39932,
+    "http_status": 200,
+    "token_returned": true,
+    "expected_scopes": true,
+    "single_organization": true,
+    "api_error": "none"
+  },
+  {
+    "name": "new_pat_full_fetch",
+    "seconds": 1.26853,
+    "exit_code": 0,
+    "linked_pr_count": 1,
+    "stderr_empty": true
+  },
+  {
+    "name": "extend_disposable_pat_expiration",
+    "seconds": 0.430817,
+    "http_status": 200,
+    "expiration_extended": true,
+    "same_authorization_id": true,
+    "token_returned": false,
+    "api_error": "none"
+  },
+  {
+    "name": "original_secret_full_fetch_after_extension",
+    "seconds": 0.897221,
+    "exit_code": 0,
+    "linked_pr_count": 1,
+    "stderr_empty": true
+  },
+  {
+    "name": "revoke_disposable_pat",
+    "seconds": 0.234776,
+    "http_status": 204
+  }
+]

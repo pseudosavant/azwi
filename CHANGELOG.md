@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0 (2026-09-16)
+
+- Add organization-specific managed PAT and temporary Microsoft Entra authentication through Azure CLI. Preserve manual PATs and the AZWI_PAT override.
+- Add a setup method menu, tenant discovery, optional device-code sign-in, and an Azure CLI login handoff that resumes setup automatically.
+- Keep Windows sign-in waits responsive to Ctrl+C and contain Azure CLI descendants so they cannot survive an abrupt azwi exit.
+- Renew managed PATs near expiration and verify expired-token replacements before saving them. Bind management to the verified tenant and account.
+- Add non-interactive fetch and fields flags. Update the managed agent skill to prevent unattended sign-in prompts.
+- Report authentication method and expiry in readiness checks. Keep local checks free of network calls and URL checks free of PAT mutations.
+
 ## 1.2.0 (2026-09-03)
 
 - Automatically synchronize already-installed, pristine older `$azure-workitem` skills with the running CLI release. Keep maintenance notices on stderr.

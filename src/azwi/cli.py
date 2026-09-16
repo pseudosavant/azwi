@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from azwi import __version__
-from azwi.auth import ORG_HELP, credentials_path, require_pat
+from azwi.auth import Credential, ORG_HELP
+from azwi.auth_flow import Authentication, auth_settings
+from azwi.azure_cli import choose, interactive_terminal
 from azwi import onboarding
 from azwi.client import AzureDevOpsClient
 from azwi.config import (
@@ -22,7 +24,7 @@ from azwi.config import (
     set_defaults,
     set_fields,
 )
-from azwi.errors import AzwiError, ConfigError, UsageError
+from azwi.errors import AzwiError, AuthError, ChooseAuthentication, ConfigError, MissingCredential, UsageError
 from azwi.render import (
     build_rendered_work_item,
     download_attachments,
@@ -108,10 +110,17 @@ def run_cli(
         if args and args[0] in {"skill", "install-skill", "remove-skill", "skill-status"}:
             return _run_skill(args, stdout=stdout, program=program)
         def verify(org, item_id, pat):
+            if item_id is None:
+                value = pat.client_value() if isinstance(pat, Credential) else pat
+                response = client_factory(org, value, stderr=stderr).get_connection_data()
+                identity = response.get("authenticatedUser", {}).get("id")
+                if not identity:
+                    raise AuthError("Could not verify organization access with this credential.")
+                return {"status": "organization_verified", "code_access": "not_verified", "identity": identity}
             output = io.StringIO()
             _run_fetch(
                 [str(item_id), "--org", org], stdout=output, stderr=stderr,
-                env={**env, "AZWI_PAT": pat}, config_path=config_path,
+                env=env, config_path=config_path, credential_override=pat,
                 client_factory=client_factory, program=program,
             )
             payload = json.loads(output.getvalue())
@@ -149,6 +158,7 @@ def run_cli(
                 config_path=config_path,
                 client_factory=client_factory,
                 program=program,
+                stdin=stdin if stdin is not None else sys.stdin,
             )
         if args[0] == "config":
             return _run_config(
@@ -167,6 +177,7 @@ def run_cli(
             config_path=config_path,
             client_factory=client_factory,
             program=program,
+            stdin=stdin if stdin is not None else sys.stdin,
         )
     except AzwiError as exc:
         stderr.write(f"ERROR: {exc}\n")
@@ -209,8 +220,9 @@ def build_root_help(program: str) -> str:
         f"  --output PATH                 Write to file instead of stdout\n"
         f"  --download-images DIR         Requires --output\n"
         f"  --download-attachments DIR    Download work item attachments\n\n"
+        f"  --non-interactive             Never prompt or launch sign-in\n\n"
         f"Env:\n"
-        f"  AZWI_PAT      PAT override (otherwise ~/.azwi/credentials.toml)\n"
+        f"  AZWI_PAT      PAT override (otherwise the configured authentication method)\n"
         f"  AZWI_ORG      Default organization for fetch and fields\n"
         f"  AZWI_PROJECT  Default project for fields\n\n"
         f"Sections:\n"
@@ -276,11 +288,12 @@ def build_fetch_help(program: str) -> str:
         f"  --extra-field REFNAME         Repeatable additional field\n\n"
         f"Targeting:\n"
         f"  --org ORG                     Override organization for this fetch\n"
+        f"  --non-interactive             Never prompt or launch sign-in\n"
         f"  Project is resolved from the fetched work item's System.TeamProject field.\n\n"
         f"Sections:\n"
         f"  metadata, description, acceptance, comments, attachments, prs\n\n"
         f"Env:\n"
-        f"  AZWI_PAT      PAT override (otherwise ~/.azwi/credentials.toml)\n"
+        f"  AZWI_PAT      PAT override (otherwise the configured authentication method)\n"
         f"  AZWI_ORG      Default organization for fetch\n"
         f"  AZWI_PROJECT  Ignored by direct work item fetch\n\n"
         f"Exit codes:\n"
@@ -359,6 +372,26 @@ def _run_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
     return 0
 
 
+def _offer_setup(org, item_id, *, stdin, stderr, env, config_path, client_factory, program):
+    answer = choose(stdin, stderr, "Azure DevOps access is not configured. Configure it now? [Y/n]: ",
+                    {"y", "Y", "n", "N"}, "y")
+    if answer.lower() != "y":
+        raise AuthError("Setup cancelled. Run uvx azwi setup in your terminal when ready.")
+    def verify(org, item_id, credential):
+        output = io.StringIO()
+        _run_fetch([str(item_id), "--org", org, "--non-interactive"], stdout=output, stderr=stderr,
+                   env=env, config_path=config_path, client_factory=client_factory, program=program,
+                   credential_override=credential)
+        result = json.loads(output.getvalue())
+        return {"status": "verified", "work_item": result["work_item"],
+                "code_access": "verified" if result["sections"]["prs"] else "not_verified"}
+    code = onboarding.setup(["--org", org] if org else [], stdout=io.StringIO(), stderr=stderr,
+                            stdin=stdin, env=env, config_path=config_path, verify=verify, program=program,
+                            fallback_work_item_id=item_id)
+    if code:
+        raise AuthError("Setup is incomplete. Follow the setup instructions before retrying the fetch.")
+
+
 def _run_fetch(
     argv: Sequence[str],
     *,
@@ -368,6 +401,8 @@ def _run_fetch(
     config_path: Path | None,
     client_factory,
     program: str,
+    stdin=None,
+    credential_override=None,
 ) -> int:
     if any(arg in {"-h", "--help"} for arg in argv):
         stdout.write(build_fetch_help(program))
@@ -392,10 +427,34 @@ def _run_fetch(
 
     raw_config = load_config(config_path or default_config_path())
     initial_config = resolve_config(raw_config, env=env, cli_org=namespace.org)
+    interactive = not namespace.non_interactive and interactive_terminal(stdin, stderr)
     if not initial_config.org:
-        raise ConfigError(ORG_HELP)
+        if not interactive or credential_override is not None:
+            raise ConfigError(ORG_HELP)
+        _offer_setup(None, namespace.work_item_id, stdin=stdin, stderr=stderr, env=env,
+                     config_path=config_path, client_factory=client_factory, program=program)
+        raw_config = load_config(config_path or default_config_path())
+        initial_config = resolve_config(raw_config, env=env, cli_org=namespace.org)
 
-    client = client_factory(initial_config.org, require_pat(env, initial_config.org, credentials_path(config_path)), verbose=namespace.verbose, stderr=stderr)
+    def verify_candidate(credential):
+        _run_fetch([str(namespace.work_item_id), "--org", initial_config.org, "--non-interactive"],
+                   stdout=io.StringIO(), stderr=stderr, env=env, config_path=config_path,
+                   client_factory=client_factory, program=program, credential_override=credential)
+    credential = credential_override
+    if credential is None:
+        flow = Authentication(initial_config.org, raw_config, env=env, config_path=config_path, stdin=stdin, stderr=stderr)
+        try:
+            credential = flow.acquire(interactive=interactive, verify=verify_candidate)
+        except (MissingCredential, ChooseAuthentication):
+            if not interactive:
+                raise
+            _offer_setup(initial_config.org, namespace.work_item_id, stdin=stdin, stderr=stderr, env=env,
+                         config_path=config_path, client_factory=client_factory, program=program)
+            raw_config = load_config(config_path or default_config_path())
+            credential = Authentication(initial_config.org, raw_config, env=env, config_path=config_path,
+                                        stdin=stdin, stderr=stderr).acquire(interactive=False, verify=verify_candidate)
+    value = credential.client_value() if isinstance(credential, Credential) else credential
+    client = client_factory(initial_config.org, value, verbose=namespace.verbose, stderr=stderr)
     progress = ProgressReporter(stderr, enabled=_should_show_progress(stderr=stderr, verbose=namespace.verbose))
     try:
         progress.update(f"Fetching work item {namespace.work_item_id}")
@@ -513,6 +572,7 @@ def _run_fields(
     config_path: Path | None,
     client_factory,
     program: str,
+    stdin=None,
 ) -> int:
     parser = _build_fields_parser(program)
     namespace = parser.parse_args(list(argv))
@@ -523,7 +583,11 @@ def _run_fields(
     if not resolved.project:
         raise ConfigError("Project is required for fields. Use --project, config defaults, or AZWI_PROJECT.")
 
-    client = client_factory(resolved.org, require_pat(env, resolved.org, credentials_path(config_path)), verbose=namespace.verbose, stderr=stderr)
+    flow = Authentication(resolved.org, raw_config, env=env, config_path=config_path, stdin=stdin, stderr=stderr)
+    def verify_candidate(credential):
+        client_factory(resolved.org, credential.client_value(), stderr=stderr).get_work_item_type_fields(resolved.project, namespace.type)
+    credential = flow.acquire(interactive=not namespace.non_interactive and interactive_terminal(stdin, stderr), verify=verify_candidate)
+    client = client_factory(resolved.org, credential.client_value(), verbose=namespace.verbose, stderr=stderr)
     response = client.get_work_item_type_fields(resolved.project, namespace.type)
     items = response.get("value")
     if not isinstance(items, list):
@@ -559,7 +623,12 @@ def _run_config(
 
     if namespace.config_command == "show":
         resolved = resolve_config(raw_config, env=env, cli_org=namespace.org, cli_project=namespace.project)
-        stdout.write(render_resolved_config(resolved))
+        rendered = render_resolved_config(resolved)
+        settings = auth_settings(raw_config, resolved.org)
+        if settings:
+            from azwi.config import dumps_toml
+            rendered += dumps_toml({"authentication": settings})
+        stdout.write(rendered)
         return 0
 
     if namespace.config_command == "set-defaults":
@@ -634,6 +703,7 @@ def _build_fetch_parser(program: str) -> argparse.ArgumentParser:
     parser.add_argument("--field-system-info", help="override system info field refname")
     parser.add_argument("--extra-field", action="append", help="repeatable extra field refname")
     parser.add_argument("--verbose", action="store_true", help="send request logs to stderr")
+    parser.add_argument("--non-interactive", action="store_true", help="never prompt or launch Microsoft sign-in")
     return parser
 
 
@@ -647,6 +717,7 @@ def _build_fields_parser(program: str) -> argparse.ArgumentParser:
     parser.add_argument("--project", help="Azure DevOps project; required unless configured")
     parser.add_argument("--org", help="Azure DevOps organization")
     parser.add_argument("--verbose", action="store_true", help="send request logs to stderr")
+    parser.add_argument("--non-interactive", action="store_true", help="never prompt or launch Microsoft sign-in")
     return parser
 
 

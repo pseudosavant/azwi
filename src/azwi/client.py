@@ -8,10 +8,10 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 from azwi import __version__
-from azwi.auth import ORG_HELP, PAT_SCOPES, missing_pat_message
+from azwi.auth import Credential, ORG_HELP, PAT_SCOPES, missing_pat_message
 from azwi.errors import ApiError, AuthError, ConfigError, NotFoundError, ThrottledError
 
 
@@ -19,11 +19,11 @@ class AzureDevOpsClient:
     def __init__(
         self,
         org: str,
-        pat: str,
+        pat: str | Credential,
         *,
         verbose: bool = False,
         stderr=None,
-        opener=urlopen,
+        opener=None,
         sleep=time.sleep,
     ) -> None:
         if not org:
@@ -31,10 +31,11 @@ class AzureDevOpsClient:
         if not pat:
             raise AuthError(missing_pat_message())
         self.org = org
-        self.pat = pat
+        self.credential = pat if isinstance(pat, Credential) else Credential(pat, "input")
+        self.pat = self.credential.pat
         self.verbose = verbose
         self.stderr = stderr
-        self._opener = opener
+        self._opener = opener or build_opener(SafeRedirect).open
         self._sleep = sleep
 
     def get_work_item(self, work_item_id: int) -> dict[str, Any]:
@@ -42,6 +43,9 @@ class AzureDevOpsClient:
             f"/_apis/wit/workitems/{work_item_id}",
             {"$expand": "relations", "api-version": "7.1-preview.3"},
         )
+
+    def get_connection_data(self) -> dict[str, Any]:
+        return self._request_json("/_apis/connectionData", {"api-version": "7.1-preview.1"})
 
     def get_comments(self, project: str, work_item_id: int, limit: int) -> dict[str, Any]:
         return self._request_json(
@@ -118,9 +122,9 @@ class AzureDevOpsClient:
                 if exc.code in (401, 403):
                     raise AuthError(
                         f"Azure DevOps authentication or access failed: HTTP {exc.code}. "
-                        f"Check that the PAT is valid for this organization and has {PAT_SCOPES}. "
+                        f"Check authentication for this organization and resource permissions ({PAT_SCOPES} for PATs). "
                         "Your account also needs access to the requested resource. "
-                        "Update AZWI_PAT if set. Otherwise run uvx azwi setup --replace-pat in your terminal, then retry the request."
+                        "Update AZWI_PAT if set. Otherwise run uvx azwi setup in your terminal. For a manual PAT use --replace-pat. Then retry the request."
                     ) from exc
                 if exc.code == 404:
                     raise NotFoundError(f"Azure DevOps resource not found: {url}.") from exc
@@ -145,8 +149,15 @@ class AzureDevOpsClient:
             "User-Agent": f"azwi/{__version__}",
         }
         if allow_auth:
-            token = base64.b64encode(f":{self.pat}".encode("utf-8")).decode("ascii")
-            headers["Authorization"] = f"Basic {token}"
+            if self.credential.scheme == "Bearer":
+                if self.credential.expires_on and self.credential.expires_on <= time.time() + 60:
+                    if not self.credential.refresh:
+                        raise AuthError("The Microsoft Entra token has expired. Run the command again.")
+                    self.credential = self.credential.refresh()
+                headers["Authorization"] = "Bearer " + self.credential.pat
+            else:
+                token = base64.b64encode(f":{self.pat}".encode("utf-8")).decode("ascii")
+                headers["Authorization"] = f"Basic {token}"
         return headers
 
     def _retry_sleep(self, attempt: int, reason: int | str) -> None:
@@ -160,5 +171,22 @@ class AzureDevOpsClient:
 
 
 def _should_send_auth(url: str) -> bool:
-    host = urlparse(url).hostname or ""
-    return host.endswith("dev.azure.com") or host.endswith("visualstudio.com")
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    try:
+        port_ok = parsed.port in (None, 443)
+    except ValueError:
+        return False
+    return parsed.scheme == "https" and port_ok and not parsed.username and not parsed.password and any(
+        host == domain or host.endswith("." + domain) for domain in ("dev.azure.com", "visualstudio.com")
+    )
+
+
+class SafeRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            previous, target = urlparse(req.full_url), urlparse(newurl)
+            if (previous.scheme, previous.hostname, previous.port) != (target.scheme, target.hostname, target.port):
+                redirected.remove_header("Authorization")
+        return redirected

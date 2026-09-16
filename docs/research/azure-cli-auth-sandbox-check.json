@@ -1,0 +1,101 @@
+{
+  "platform": "win32",
+  "python": "3.13.3",
+  "azure_cli": null,
+  "credential_source": "file",
+  "records": [
+    {
+      "name": "azure_cli_version",
+      "seconds": 2.39885,
+      "exit_code": 1,
+      "interaction_required": false,
+      "login_required": false,
+      "permission_denied": true,
+      "network_error": false,
+      "aad_error_codes": []
+    },
+    {
+      "name": "azwi_help_subprocess",
+      "seconds": 0.467602,
+      "exit_code": 0
+    },
+    {
+      "name": "azure_account_show",
+      "seconds": 1.748615,
+      "exit_code": 1,
+      "interaction_required": false,
+      "login_required": false,
+      "permission_denied": true,
+      "network_error": false,
+      "aad_error_codes": []
+    },
+    {
+      "name": "resolve_existing_credential_100_times",
+      "seconds": 0.021728,
+      "iterations": 100,
+      "ok": true
+    },
+    {
+      "name": "entra_acquisition_first",
+      "seconds": 2.045069,
+      "exit_code": 1,
+      "interaction_required": false,
+      "login_required": false,
+      "permission_denied": true,
+      "network_error": false,
+      "aad_error_codes": []
+    },
+    {
+      "name": "discover_work_item_read_only",
+      "seconds": 0.091934,
+      "error_type": "PermissionError",
+      "errno": 13,
+      "winerror": 10013,
+      "ok": false
+    }
+  ],
+  "summary": {
+    "azure_account_show": {
+      "samples": 1,
+      "median_seconds": 1.748615,
+      "min_seconds": 1.748615,
+      "max_seconds": 1.748615,
+      "successful_samples": 0
+    },
+    "azure_cli_version": {
+      "samples": 1,
+      "median_seconds": 2.39885,
+      "min_seconds": 2.39885,
+      "max_seconds": 2.39885,
+      "successful_samples": 0
+    },
+    "azwi_help_subprocess": {
+      "samples": 1,
+      "median_seconds": 0.467602,
+      "min_seconds": 0.467602,
+      "max_seconds": 0.467602,
+      "successful_samples": 1
+    },
+    "discover_work_item_read_only": {
+      "samples": 1,
+      "median_seconds": 0.091934,
+      "min_seconds": 0.091934,
+      "max_seconds": 0.091934,
+      "successful_samples": 0
+    },
+    "entra_acquisition_first": {
+      "samples": 1,
+      "median_seconds": 2.045069,
+      "min_seconds": 2.045069,
+      "max_seconds": 2.045069,
+      "successful_samples": 0
+    },
+    "resolve_existing_credential_100_times": {
+      "samples": 1,
+      "median_seconds": 0.021728,
+      "min_seconds": 0.021728,
+      "max_seconds": 0.021728,
+      "successful_samples": 1
+    }
+  }
+}

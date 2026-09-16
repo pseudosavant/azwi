@@ -38,10 +38,12 @@ If the README and spec ever diverge, follow `spec.md`.
 1. Use `~/.azwi/config.toml` for non-secret defaults.
 2. `azwi` should manage this file through `config` subcommands.
 3. Do not store PATs in `config.toml`.
-4. Use `AZWI_PAT` first, then the selected organization's PAT in `~/.azwi/credentials.toml`. Setup may save PATs in this dedicated file with normal inherited permissions. Do not tighten permissions or use OS credential stores. Provide environment-variable instructions if file storage is unavailable.
+4. Use `AZWI_PAT` first, then the selected organization's configured authentication method. Support Azure CLI managed PATs, temporary Entra tokens, manual PATs, and environment authentication. Legacy PAT-only configurations continue to read `~/.azwi/credentials.toml`. Setup may save PATs in this dedicated file with normal inherited permissions. Do not tighten permissions or use OS credential stores for azwi credentials. Leave Azure CLI's own cache management to Azure CLI. Provide environment-variable instructions if file storage is unavailable.
 5. Do not implement a command that tries to persistently set shell environment variables for the user across platforms.
 6. Support both the common single-org case and multi-org config in v1.
 7. `config show` should display the effective resolved config by default.
+8. Keep non-secret authentication settings per organization in `config.toml`. Never save Entra access tokens there or in azwi credential files.
+9. Agent fetch and fields commands must use `--non-interactive`. Never launch sign-in in unattended execution. Interactive setup delegates sign-in to Azure CLI and resumes afterward.
 
 ## Azure DevOps behavior constraints
 

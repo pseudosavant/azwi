@@ -11,13 +11,9 @@ The CLI is designed for both people and agents. Successful output stays on stdou
 ## Quick start with an agent
 
 1. Install `uv` using the link above.
-2. Create an Azure DevOps personal access token for your organization with **Work Items: Read** and **Code: Read**.
-3. Run setup using the PowerShell or Bash commands below and enter the PAT at the terminal prompt with asterisk masking. Replace the example URL with a work item you can access.
+2. For automatic authentication, install [Azure CLI](https://aka.ms/installazurecli) if it is not already available. A manually supplied PAT also works without Azure CLI.
+3. Run setup using the PowerShell or Bash commands below and choose an authentication method. Replace the example URL with a work item you can access.
 4. Use `$azure-workitem` in your agent.
-
-To create the PAT, open Azure DevOps **User settings > Personal access tokens**. See [Microsoft's PAT instructions](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate).
-
-Choose an expiration that fits your organization's policy. A longer lifetime reduces renewal interruptions. Use a shorter lifetime when the information or environment calls for it.
 
 PowerShell:
 
@@ -31,15 +27,65 @@ Bash or zsh:
 uvx azwi setup "https://dev.azure.com/my-org/Payments/_workitems/edit/2195"
 ```
 
-Setup extracts and saves your organization, verifies the supplied work item through a normal fetch, and installs the managed agent skill. Setup saves the PAT in `~/.azwi/credentials.toml`, separately from non-secret settings in `~/.azwi/config.toml`. If `AZWI_PAT` is already set, setup uses it without saving its value. No separate test fetch is needed.
+Setup extracts your organization, verifies the supplied work item through a normal fetch, saves the configuration, and installs the managed agent skill. When no authentication is already configured, setup offers these methods:
 
-Bare `uvx azwi setup` asks for a work item URL or organization name. You can also use `uvx azwi setup --org my-org`. An organization-only setup configures local defaults but does not verify a work item. No project default is required.
+| Method | Behavior |
+| --- | --- |
+| `managed-pat` | Default menu choice. Azure CLI signs you in so azwi can create and renew an organization-specific PAT with **Work Items: Read** and **Code: Read**. Ordinary fetches use the saved PAT without starting Azure CLI. |
+| `entra` | Azure CLI supplies a temporary Microsoft Entra token. azwi keeps it in memory for the command and does not save a token. It uses your account's Azure DevOps permissions. |
+| `manual-pat` | Paste a PAT at a masked terminal prompt. You manage its expiration and replacement. Azure CLI is not required. |
+| `environment` | Use `AZWI_PAT` from the execution environment. azwi prints instructions but does not set or persist shell variables. |
+
+PATs are saved in `~/.azwi/credentials.toml`, separately from non-secret settings in `~/.azwi/config.toml`. A non-empty `AZWI_PAT` overrides every saved method and is never copied to disk automatically. Unset it before configuring a different method.
+
+Bare `uvx azwi setup` asks for a work item URL or organization name. You can also use `uvx azwi setup --org my-org`. Azure CLI methods verify organization access even without a work item URL. A URL additionally verifies comments and linked PR metadata through the normal fetch. No project default is required.
 
 Then use `$azure-workitem` in Codex, Claude Code, or another agent harness that supports skills:
 
 > Use $azure-workitem to inspect 2195. Summarize the requested change, acceptance criteria, and any relevant pull request discussion.
 
 The skill accepts numeric IDs and supported Azure DevOps Cloud URLs. It requests PR comments and downloads only when needed. Start a new agent session if the installed skill is not yet available.
+
+### Microsoft sign-in and automatic renewal
+
+Select a method explicitly to skip the method menu:
+
+```powershell
+uvx azwi setup "<work-item-url>" --auth managed-pat
+uvx azwi setup "<work-item-url>" --auth entra
+```
+
+azwi first tries your existing Azure CLI session. If Microsoft requires sign-in, setup offers normal sign-in, device-code sign-in, another authentication method, or cancellation. After you choose sign-in, Azure CLI owns the account window, browser, or device-code instructions. Keep the original terminal open. When Azure CLI finishes, azwi automatically checks the account, verifies access, and completes setup. You do not copy a token or rerun the original command. Sign-in also updates your shared Azure CLI session.
+
+The handoff runs `az login --tenant TENANT_ID --scope 499b84ac-1321-427f-aa17-267ca6975798/.default --allow-no-subscriptions --output none`. The subscription picker is disabled only for that child process. Azure CLI uses its normal platform sign-in experience. Device-code sign-in adds `--use-device-code`. Both child output streams go to azwi's stderr, keeping stdout available for the final JSON report. Ctrl+C cancels the handoff. azwi also stops it after five minutes. On Windows, child process containment also stops Azure CLI descendants if the terminal or launcher terminates azwi abruptly. In that case the launcher may determine the exit code.
+
+azwi discovers the organization's tenant when possible. Use `--tenant TENANT_ID` if discovery is unavailable or the account has access to several tenants. Use `--login-method device-code` to prefer device-code sign-in when login is needed. Setup saves the verified tenant and Azure DevOps identity per organization. A later account mismatch fails without changing the managed PAT.
+
+Managed PATs request a 30-day lifetime and renew when used within seven days of expiration. Repeating setup reuses a healthy managed PAT. You can configure the lifetime and renewal window:
+
+```powershell
+uvx azwi setup --org my-org --auth managed-pat --pat-lifetime-days 30 --renew-before-days 7
+```
+
+Organization policy may require a shorter lifetime or prohibit PAT creation. Active PAT renewal preserves the secret. Failed early renewal uses the still-valid PAT, reports the repair command, and waits an hour before trying again. An expired managed PAT is replaced and verified before being saved. azwi attempts to revoke the old token afterward. These operations happen when the tool runs, with no background service. Run setup in your terminal when sign-in is required. Manually supplied and environment PATs are never renewed automatically.
+
+Entra mode invokes Azure CLI for each command, then shares that token across the command's API calls. Azure CLI can reuse its own cache without interactive sign-in. azwi does not maintain an additional token cache. In a local investigation, cached acquisition added about two seconds per invocation. This varies by machine. Managed PAT fetches avoid that cost outside the renewal window.
+
+An interactive first fetch with missing configuration offers setup and resumes the fetch on success. For agents and automation, always use `--non-interactive` with fetches and `fields`. It prevents prompts and sign-in windows even when a terminal is attached. The managed skill includes this flag. Missing or unusable authentication returns an error with setup guidance.
+
+### Existing users and changing authentication methods
+
+Existing saved PATs and `AZWI_PAT` continue to work after upgrading. Existing manual PATs stay manually managed. Upgrading does not replace them or enable automatic renewal. Setup reuses the configured method unless you explicitly select another with `--auth`.
+
+To switch to managed PAT authentication, unset `AZWI_PAT` in the terminal if it is set, then run:
+
+```powershell
+uvx azwi setup "https://dev.azure.com/my-org/Payments/_workitems/edit/2195" --auth managed-pat
+```
+
+Use `--auth entra` instead for temporary Azure CLI tokens. Use `--auth manual-pat` to return to a manually managed PAT, or `--auth environment` to require `AZWI_PAT` for that organization. These choices are saved per organization. They do not change other organizations' authentication methods. Supplying a work item URL verifies the selected method before completing setup.
+
+After upgrading, start a new agent session to pick up the updated skill's non-interactive commands. Installed releases update pristine older managed skills automatically. Local source builds and custom skill locations require an explicit skill install. See [Manage the agent skill](#manage-the-agent-skill).
 
 ### Credentials and environment overrides
 
@@ -51,6 +97,10 @@ pat = "<your-pat>"
 ```
 
 Setup creates this file for you. It stores the PAT as plain text with normal inherited filesystem permissions. It does not apply special restrictions or change ACLs. Keep it out of repositories and shared config exports. `config show`, setup reports, and diagnostics never display saved PATs.
+
+Managed entries also contain the authorization ID, expiry, tenant, identity, and optional renewal retry time. azwi uses atomic replacement and a credential-file lock when updating them. Other organization entries are preserved. The selected method and non-secret settings live under `[orgs."my-org".auth]` in `config.toml`.
+
+To create a manual PAT, open Azure DevOps **User settings > Personal access tokens** and select **Work Items: Read** and **Code: Read**. See [Microsoft's PAT instructions](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate). Choose an expiration that fits your organization's policy. A longer lifetime reduces renewal interruptions. Use a shorter lifetime when the information or environment calls for it. Enter it with `uvx azwi setup "<work-item-url>" --auth manual-pat`.
 
 A non-empty `AZWI_PAT` overrides the saved token. This also works if the credentials file is unavailable or malformed. If file storage is unavailable, set the variable in the environment where azwi runs:
 
@@ -85,11 +135,11 @@ uvx azwi config check
 uvx azwi config check "https://dev.azure.com/my-org/Payments/_workitems/edit/2195"
 ```
 
-`config check` is read-only and reports the effective organization and its source, the credential source (`environment`, `file`, `missing`, or `unavailable`) and credentials file path, skill status, and exact next steps. With a URL it also runs a default fetch. Without a URL it only checks local readiness. Run it through the agent when diagnosing differences between terminal and agent access. A verified work item without returned linked PRs does not establish Code access.
+`config check` reports the effective organization and its source, authentication method, credential source, known expiry, credentials file path, skill status, and next steps. Without a URL it only checks local readiness and never starts Azure CLI. A locally configured Entra profile does not prove that its session still works. With a URL it performs a default fetch and may silently acquire an Entra token. Checks never launch sign-in, renew or create PATs, or modify azwi files. Azure CLI may update its own cache during token acquisition. Run checks through the agent when diagnosing differences between terminal and agent access. A verified work item without returned linked PRs does not establish Code access.
 
-If a saved PAT expires or is rejected, run `uvx azwi setup "<work-item-url>" --replace-pat` in your terminal. Setup verifies the replacement before saving it. If you use `AZWI_PAT`, update its value in the execution environment instead. Unset it before using `--replace-pat`. Make sure the token applies to the selected organization and has both required scopes.
+For managed PAT or Entra sign-in repair, rerun `uvx azwi setup "<work-item-url>"` in your terminal. If a manually supplied PAT expires or is rejected, add `--replace-pat`. Setup verifies a replacement before saving it. If you use `AZWI_PAT`, update its value in the execution environment instead. Unset it before using `--replace-pat`. Make sure the token applies to the selected organization and has both required scopes. Rejected credentials never cause a silent switch to another authentication method.
 
-Setup and checks return JSON by default. Add `--format plain` for a compact text report. Setup installs the skill by default and respects existing managed-skill protections. Use `--skills-dir DIR` with either command for a custom skill root. `setup --non-interactive` never prompts. It uses `AZWI_PAT` or the saved PAT for the selected organization. If both are missing, setup saves the organization and installs the skill, then returns exit code 4 with `ready: false` and repair instructions. Run interactive setup or set the variable and rerun setup to verify the work item. A failure to save an entered PAT also returns incomplete readiness and environment-variable instructions. Sandboxed and remote agents need access to the same credentials file or their own `AZWI_PAT`. Run `config check` through the agent to verify its access.
+Setup and checks return JSON by default. Add `--format plain` for a compact text report. Setup installs the skill by default and respects existing managed-skill protections. Use `--skills-dir DIR` with either command for a custom skill root. `setup --non-interactive` can use a saved PAT, `AZWI_PAT`, or a usable Azure CLI session for an explicitly selected or already configured Azure CLI method. It never prompts or launches sign-in. Without a configured method or PAT, it saves the organization and installs the skill, then returns exit code 4 with `ready: false` and repair instructions. A failure to save an entered PAT also returns incomplete readiness and environment-variable instructions. Sandboxed and remote agents need access to the credentials or Azure CLI session in their own execution environment.
 
 ## What it returns
 
@@ -224,7 +274,7 @@ uvx azwi config set-field --project Payments --description Custom.DevDescription
 uvx azwi config add-extra-field --project Payments Custom.ReleaseNotes
 ```
 
-`config show` displays the effective resolved configuration. Config updates create the file when needed and never write `AZWI_PAT` into it. `config check` does not create or update files.
+`config show` displays the effective resolved configuration. Config updates create the file when needed and never write `AZWI_PAT` into it. `config check` does not create or update azwi configuration, credentials, or skill files.
 
 Settings are resolved in this order:
 
@@ -378,7 +428,7 @@ Environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `AZWI_PAT` | Azure DevOps PAT override. Otherwise use the selected organization's saved PAT |
+| `AZWI_PAT` | Overrides every saved authentication method. Otherwise use the selected organization's configured method, with manual PAT lookup as the legacy default |
 | `AZWI_ORG` | Default organization for fetch and fields |
 | `AZWI_PROJECT` | Default project for project-scoped commands such as `fields` |
 
@@ -393,6 +443,8 @@ Exit codes:
 | `5` | Work item or resource not found |
 | `6` | Azure DevOps API error |
 | `7` | Throttling retries exhausted |
+
+These codes describe exits controlled by azwi. Cancelling at the Microsoft sign-in menu returns `4`. Ctrl+C can cause a terminal or launcher to terminate the command and report a different nonzero status, such as `-1` in PowerShell on Windows. Treat any nonzero status as an unsuccessful command. Cancellation does not produce a success report, and Azure CLI login processes are cleaned up when azwi exits.
 
 `uvx azwi --about` prints the command name and version, a short summary, the project URL, and the MIT license. The project source is available on [GitHub](https://github.com/pseudosavant/azwi).
 
@@ -415,16 +467,16 @@ Run the tests and build the distribution:
 ```powershell
 uv run python -m unittest discover -s tests -v
 uv build --no-sources
-uv run python tests/wheel_smoke.py dist/azwi-1.3.1-py3-none-any.whl
+uv run python tests/wheel_smoke.py dist/azwi-1.4.0-py3-none-any.whl
 ```
 
 The wheel smoke check uses temporary environments and a temporary home directory. It validates wheel packaging, index-style metadata, local and editable installs, `uvx`, and the PEP 723 wrapper. It requires access to build and runtime dependencies.
 
 To release a version:
 
-1. Tag a release such as `v1.3.1`.
-2. Let GitHub Actions build the package.
-3. Publish to PyPI using Trusted Publishing.
+1. Update the version and changelog, then commit and tag the release, such as `v1.4.0`.
+2. Push the commit and tag. The tag triggers GitHub Actions to build and publish to PyPI using Trusted Publishing.
+3. Verify the workflow succeeds and create the GitHub release for that tag.
 
 ## License
 

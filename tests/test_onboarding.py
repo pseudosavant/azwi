@@ -37,7 +37,8 @@ class OnboardingTests(unittest.TestCase):
         FakeClient.instances.clear()
 
     def run_command(self, args, env=None, stdin=None, client=FakeClient):
-        stdout, stderr = io.StringIO(), io.StringIO()
+        stdout = io.StringIO()
+        stderr = Terminal() if stdin is not None and stdin.isatty() else io.StringIO()
         code = run_cli(
             args, stdout=stdout, stderr=stderr, env=env or {}, config_path=self.config,
             client_factory=client, program="azwi", stdin=stdin or io.StringIO(),
@@ -127,7 +128,7 @@ class OnboardingTests(unittest.TestCase):
 
     def test_prompted_pat_is_saved_and_works_in_fresh_environment(self):
         with patch("azwi.onboarding.read_masked_pat", return_value=TOKEN) as prompt:
-            code, out, err = self.run_command(self.setup_args(URL), stdin=Terminal())
+            code, out, err = self.run_command(self.setup_args(URL, "--auth", "manual-pat"), stdin=Terminal())
         self.assertEqual(code, 0, err)
         prompt.assert_called_once()
         self.assertIn("normal inherited permissions", err)
@@ -145,7 +146,8 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         code, out, err = self.run_command(["config", "show"])
         self.assertEqual(code, 0, err)
-        self.assertNotIn("pat", out.lower())
+        self.assertIn('method = "manual-pat"', out)
+        self.assertNotIn(TOKEN, out)
 
     def test_env_pat_is_not_automatically_persisted(self):
         self.run_command(self.setup_args(URL), {"AZWI_PAT": TOKEN})
@@ -191,7 +193,7 @@ class OnboardingTests(unittest.TestCase):
                 raise PermissionError
             return replace(source, destination)
         with patch("azwi.onboarding.read_masked_pat", return_value=TOKEN), patch("azwi.auth.os.replace", side_effect=fail_credentials):
-            code, out, err = self.run_command(self.setup_args(URL), stdin=Terminal())
+            code, out, err = self.run_command(self.setup_args(URL, "--auth", "manual-pat"), stdin=Terminal())
         self.assertEqual(code, 4)
         self.assertFalse(json.loads(out)["ready"])
         self.assertIn("Set AZWI_PAT instead", err)
@@ -213,7 +215,7 @@ class OnboardingTests(unittest.TestCase):
 
     def test_hidden_input_unavailable_does_not_fall_back_to_echo(self):
         with patch("azwi.onboarding.read_masked_pat", side_effect=OSError):
-            code, out, err = self.run_command(self.setup_args(URL), stdin=Terminal())
+            code, out, err = self.run_command(self.setup_args(URL, "--auth", "manual-pat"), stdin=Terminal())
         self.assertEqual(code, 4)
         self.assertIn("Masked PAT input is unavailable", err)
         self.assertFalse((self.root / "credentials.toml").exists())

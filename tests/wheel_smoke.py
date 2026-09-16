@@ -1,4 +1,4 @@
-"""Run with: python tests/wheel_smoke.py dist/azwi-1.3.1-py3-none-any.whl."""
+"""Run with: python tests/wheel_smoke.py dist/azwi-1.4.0-py3-none-any.whl."""
 
 from __future__ import annotations
 
@@ -24,6 +24,10 @@ def main() -> None:
         assert not any("keyring" in dependency.lower() for dependency in project["dependencies"])
         assert "azwi/auth.py" in archive.namelist()
         assert "azwi/onboarding.py" in archive.namelist()
+        assert "azwi/azure_cli.py" in archive.namelist()
+        assert "azwi/_windows_job.py" in archive.namelist()
+        assert "azwi/auth_flow.py" in archive.namelist()
+        assert "azwi/pat_lifecycle.py" in archive.namelist()
         assert any(name.endswith("/licenses/LICENSE") for name in archive.namelist())
 
     with tempfile.TemporaryDirectory(prefix="azwi-wheel-smoke-") as temporary:

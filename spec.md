@@ -45,7 +45,7 @@ These points should drive the v2 design.
 ## Non-goals
 
 1. Full Azure DevOps CRUD support.
-2. Browser sign-in or automatic PAT creation. Setup may prompt for a work item URL, organization, and masked PAT.
+2. Direct Microsoft identity browser integration or a background credential daemon. Delegate interactive sign-in to Azure CLI.
 3. Rich terminal UI.
 4. Maintaining byte-for-byte output compatibility with v1.
 
@@ -146,7 +146,31 @@ Notes:
 
 ## Authentication
 
-Authentication uses a non-empty `AZWI_PAT` environment variable first, then the PAT for the resolved organization in `~/.azwi/credentials.toml`. An environment override bypasses credential-file access entirely. Never retry with another credential after an authentication failure.
+Authentication uses a non-empty `AZWI_PAT` environment variable first, then the resolved organization's configured authentication method. An environment override bypasses credential-file access and Azure CLI entirely. Never retry with another authentication method after an authentication failure. Existing PAT-only configurations continue to work.
+
+Supported methods are `managed-pat`, `entra`, `manual-pat`, and `environment`. Save the selected method under `[orgs."<org>".auth]` in non-secret config. Azure CLI methods also save `tenant`, `identity`, and optionally `login_method` (`auto` or `device-code`). Managed PAT settings include `pat_lifetime_days` (default 30, range 1..365) and `renew_before_days` (default 7 or lifetime minus one if shorter, range 0 to lifetime minus one).
+
+`managed-pat` obtains a Microsoft Entra token through Azure CLI and calls the Azure DevOps PAT Lifecycle API. Create an organization-specific PAT with exactly `vso.work vso.code` and `allOrgs: false`. Honor organization policies. Do not broaden scopes, silently select another method, or retry ambiguous mutation failures.
+
+Store managed PAT metadata alongside its secret in credentials.toml: `managed = true`, `authorization_id`, `expires_on` as epoch seconds, `tenant`, `identity`, and optional `retry_after` as epoch seconds. Validate this schema without exposing values. Serialize credential writes with an OS advisory lock and reread after locking. Preserve other organizations.
+
+A healthy PAT needs no Azure CLI invocation. During the renewal window, try a silent extension that preserves the secret. If it fails while the PAT is still valid, use the existing PAT, emit one repair notice, and save a one-hour retry cooldown. Explicit setup bypasses the cooldown. After expiration, acquire an Entra token, create a replacement, verify it, save it atomically, then attempt to revoke the old PAT. Verification or storage failure must preserve the old credential and attempt to revoke the new candidate. Report cleanup failures with an authorization ID and manual removal guidance. Never automatically manage a manually supplied or environment PAT.
+
+`entra` uses Bearer authorization for all supported API calls. Acquire once per command with Azure CLI, reuse the in-memory credential, and silently refresh before expiry in a long-running command. Do not save an Entra token or copy Azure CLI's token cache into azwi storage. An Entra token uses the signed-in account's permissions rather than the PAT's two read scopes. Azure CLI subprocess startup adds per-command overhead.
+
+Before creating, replacing, or extending a managed PAT, verify the Azure DevOps identity through connectionData. It must match the saved identity and tenant. Entra acquisition also checks this binding. Reject mismatches without mutating PATs. Strip authorization on cross-origin HTTP redirects and do not send credentials to arbitrary image or attachment hosts.
+
+### Azure CLI handoff
+
+1. Find `az` on PATH. If unavailable, interactive setup returns to the method menu with installation and manual authentication guidance. Non-interactive calls fail with actionable instructions.
+2. Select the tenant from explicit `--tenant`, then saved settings, then the organization's `X-VSS-ResourceTenant` header. Accept only nonzero UUIDs. If discovery yields no tenant, interactive setup can confirm the current Azure CLI tenant or accept a typed tenant ID. Unattended calls require `--tenant` in this case.
+3. Try `az account get-access-token --tenant TENANT_ID --resource 499b84ac-1321-427f-aa17-267ca6975798 --output json --only-show-errors` with captured output. Require a matching tenant and future `expires_on`. Never echo captured tokens or Azure CLI error output.
+4. If sign-in is required and stdin and stderr are terminals, offer normal Microsoft sign-in, device-code sign-in, another authentication method, or cancellation. Explain that this updates the shared Azure CLI session and azwi resumes automatically. Network errors do not trigger a login loop.
+5. Run `az login --tenant TENANT_ID --scope 499b84ac-1321-427f-aa17-267ca6975798/.default --allow-no-subscriptions --output none` with inherited terminal input and both output streams directed to azwi stderr. Add `--use-device-code` when selected. Set `AZURE_CORE_LOGIN_EXPERIENCE_V2=off` only in the child environment. Do not persist Azure CLI configuration changes.
+6. Wait for Azure CLI, then reacquire and verify a token. Exit zero from login alone is not sufficient. Ctrl+C or a five-minute timeout stops the child process tree and fails without changing azwi credentials. Token acquisition has a separate 45-second timeout.
+7. `--non-interactive` and non-terminal execution never prompt or launch sign-in. They may silently acquire tokens or renew managed PATs. Agent invocations must set `--non-interactive` even if attached to a pseudo-terminal.
+
+On Windows, check process completion at intervals no longer than 200 milliseconds so the Python Ctrl+C handler can run during sign-in. Before starting Azure CLI, associate the azwi process with an unnamed, non-inheritable Windows job configured to terminate its descendants when the process exits. Keep the job handle open until process termination. This also handles abrupt termination where Python cleanup cannot execute. A launcher that terminates azwi directly can determine the observed exit code.
 
 PAT storage policy:
 
@@ -159,7 +183,7 @@ PAT storage policy:
 7. Save with a temporary sibling file and atomic replacement. Invalid or inaccessible files produce secret-free errors. Do not overwrite malformed credentials. Provide PowerShell and Bash environment-variable instructions as a fallback. Do not write shell startup files or change the parent shell's environment.
 8. Prompts, reports, and diagnostics must never expose the PAT value. PAT input displays asterisks and must never fall back to displaying the actual characters. Masking must work on all supported Python versions. Config show never includes credentials.
 
-Backward compatibility is not required.
+Legacy entries containing only a `pat` string remain valid and are treated as manually managed.
 
 ## Target defaults
 
@@ -338,16 +362,17 @@ uvx azwi config check "https://dev.azure.com/contoso/Payments/_workitems/edit/21
 1. `setup` accepts an optional positional work item URL and `--org`. A conflicting URL organization and `--org` is a usage error.
 2. Support HTTPS `dev.azure.com/<org>/.../_workitems/edit/<id>` and `<org>.visualstudio.com/.../_workitems/edit/<id>` URLs. Reject unrelated hosts, credentials in URLs, nonstandard ports, and invalid IDs. No network request is sent to an arbitrary supplied URL.
 3. Bare interactive setup asks for a work item URL or organization name. Non-interactive setup can use an existing default organization.
-4. Setup resolves the environment override or a saved PAT. Interactive setup prompts for a masked PAT if neither exists. Explain the plain-text file and inherited permissions before prompting. Separate permissions, expiration guidance, the instructions link, the storage path, and the input prompt with line breaks and blank lines. PAT guidance includes Work Items: Read and Code: Read, a creation link, and this expiration guidance: "Choose an expiration that fits your organization's policy. A longer lifetime reduces renewal interruptions. Use a shorter lifetime when the information or environment calls for it."
-5. `--non-interactive` never prompts. Empty interactive input cancels setup. `--replace-pat` prompts for a replacement saved token. It requires an interactive terminal and an unset AZWI_PAT. There is no command-line PAT value argument.
+4. Reuse an environment override or already configured method. Otherwise interactive setup offers managed PAT (default), Entra, manual PAT, environment variable, and cancellation. `--auth {managed-pat,entra,manual-pat,environment}` selects explicitly. Azure CLI options are `--tenant`, `--login-method`, `--pat-lifetime-days`, and `--renew-before-days`. Reject incompatible flags before making changes. A non-empty AZWI_PAT must be unset before configuring another method. Repeated managed setup reuses a healthy PAT.
+5. Manual setup prompts for a masked PAT when needed. Explain the plain-text file and inherited permissions before prompting. PAT guidance includes Work Items: Read and Code: Read, a creation link, and expiration guidance appropriate to organization policy. `--replace-pat` prompts for a manually supplied replacement. It requires an interactive terminal and an unset AZWI_PAT. There is no command-line PAT value argument. `--non-interactive` never prompts. Empty organization or PAT input cancels. Empty menu input accepts the displayed default.
 6. A supplied URL is verified using the normal default fetch, including comments and linked PR metadata, before saving the organization or an entered PAT. No downloads or PR thread comments are enabled. A failure prevents these setup mutations.
 7. Setup saves the organization through the existing config functions and installs the managed skill by default. `--skills-dir DIR` overrides its root. Existing skill content protections apply. No `--install-skill` flag is needed.
-8. If credentials are missing in non-interactive setup, setup still saves the organization and installs the skill, then returns exit code 4 with `ready: false`, an interactive setup command, and PowerShell and Bash AZWI_PAT instructions. Unreadable or unwritable credential files also produce incomplete readiness and environment fallback guidance. Skill installation failures identify that the organization was already saved.
+8. When no method is configured or selected and no PAT is available, non-interactive setup still saves the organization and installs the skill, then returns exit code 4 with `ready: false`, an interactive setup command, and PowerShell and Bash AZWI_PAT instructions. Manual PAT storage failures produce incomplete readiness and environment fallback guidance. A selected Azure CLI method that requires sign-in fails without prompting or completing setup. New managed PAT candidates must be cleaned up on verification or storage failure. Skill installation failures identify settings that were already saved.
 9. Setup and config check return deterministic JSON reports by default. Both accept `--format plain`. Prompts and diagnostics go to stderr. Reports never include a PAT.
-10. `config check [URL] [--org ORG]` is read-only and bypasses automatic skill synchronization. It checks the organization, resolved credential availability, and managed skill presence. It reports the credential source and credentials file path without exposing values. It accepts `--skills-dir DIR` and reports all missing prerequisites together with repair commands.
-11. Config check with a URL performs the normal fetch without saving the URL's organization. Without a URL it reports local readiness with verification `not_checked`. A returned linked PR establishes Code access for that resource. Otherwise Code access is `not_verified`.
+10. `config check [URL] [--org ORG]` bypasses automatic skill synchronization. It checks the organization, resolved credential availability, and managed skill presence. It reports authentication method, credential source, known expiry, and credentials file path without exposing values. Sources include `environment`, `file`, `managed-pat`, `azure-cli`, `missing`, and `unavailable`. It accepts `--skills-dir DIR` and reports missing prerequisites with repair commands. Expired managed PATs are not ready.
+11. Config check with a URL performs the normal fetch without saving the URL's organization. It may silently acquire an Entra token but never launches sign-in or renews a PAT. Checks do not modify azwi files. Azure CLI may update its own cache. Without a URL, check reports local readiness with verification `not_checked` and never starts Azure CLI. A returned linked PR establishes Code access for that resource. Otherwise Code access is `not_verified`. Azure CLI setup without a URL verifies organization access through connectionData and reports `organization_verified`.
 12. Missing organization or skill readiness uses exit code 3. Missing authentication uses exit code 4 unless an organization error already takes precedence. Verification failures use the existing fetch error code. Successful checks use exit code 0.
 13. Setup and checks report credential availability only in their current execution environment. Sandboxed, remote, and desktop execution may have different home directories, file access, and environments. Run config check within the agent execution context to test its access.
+14. An interactive first fetch with missing organization or credentials offers setup. After successful setup, reload configuration and resume the original fetch. Keep setup reports off stdout so only the final fetch payload appears there. Fetch and fields support `--non-interactive`.
 
 ## About output
 
@@ -377,8 +402,8 @@ Requirements:
 4. `skill remove` removes only `SKILL.md` and its directory if empty. Unrelated files are preserved.
 5. Removal refuses unmanaged content unless `--force` is provided. Installation and removal refuse linked paths and unexpected file types.
 6. Skill commands write deterministic JSON result objects to stdout and diagnostics to stderr only. `skill status --format plain` also supports plain output. `install-skill`, `remove-skill`, and `skill-status` are aliases.
-7. `$azure-workitem <id>` calls `uvx azwi <id>` and parses the default JSON output.
-8. For supported Azure DevOps Cloud work item URLs, the skill extracts the ID and organization and calls `uvx azwi <id> --org <org>`.
+7. `$azure-workitem <id>` calls `uvx azwi <id> --non-interactive` and parses the default JSON output.
+8. For supported Azure DevOps Cloud work item URLs, the skill extracts the ID and organization and calls `uvx azwi <id> --org <org> --non-interactive`. Every skill fetch or fields command must use this flag. Sign-in repair belongs in the user's terminal.
 9. URL parsing for fetch requests belongs to the skill. Setup and config check also accept URLs. The public fetch CLI remains `azwi <work_item_id> [options]`.
 10. The skill keeps attachment downloads, image downloads, and PR thread comments opt-in, matching the CLI behavior.
 11. If attachment download is requested without a destination, the skill uses `./azwi-<id>-attachments`. A user-supplied destination wins.
@@ -390,7 +415,7 @@ The canonical skill is generated from one bundled template. Its UTF-8 text has n
 ```yaml
 metadata:
   managed-by: azwi
-  managed-version: "1.3.1"
+  managed-version: "1.4.0"
   managed-content-sha256: "sha256:<64 lowercase hexadecimal characters>"
 ```
 
@@ -880,7 +905,7 @@ What should be preserved conceptually:
 
 1. same general exit code meanings
 2. same core Markdown sections
-3. same PAT-based auth model
+3. PAT authentication as an available method
 4. same field discovery capability
 
 What should not be preserved:
@@ -912,6 +937,9 @@ The v2 implementation should include automated tests for:
 12. managed skill installation, overwrite, removal, URL guidance, and advanced fetch instructions
 13. setup URL parsing, default skill installation, full-fetch verification, and masked PAT storage and environment fallback guidance
 14. read-only config checks, environment override and per-organization file authentication, and secret-free diagnostics
+15. Azure CLI login handoff, token reacquisition, device-code selection, cancellation, timeout, missing CLI, and unattended behavior
+16. managed PAT scopes, identity binding, renewal cooldown, expired replacement, candidate cleanup, concurrent updates, and storage failures
+17. Bearer authentication across API calls and downloads, token expiry refresh, and cross-origin redirect credential stripping
 
 Use recorded fixtures or mocked HTTP responses for Azure DevOps API calls.
 

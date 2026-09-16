@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
 import tomllib
 from pathlib import Path
+from uuid import uuid4
 from typing import Any, Mapping
 
 from azwi.errors import ConfigError
@@ -38,11 +40,21 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
 def save_config(data: Mapping[str, Any], path: Path | None = None) -> Path:
     config_path = path if path is not None else default_config_path()
+    temporary = config_path.with_name(f".{config_path.name}.{uuid4().hex}.tmp")
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(dumps_toml(dict(data)), encoding="utf-8", newline="\n")
+        with temporary.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(dumps_toml(dict(data)))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, config_path)
     except OSError:
         raise ConfigError(f"Cannot write config at {config_path}. Check directory and file permissions.") from None
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
     return config_path
 
 
@@ -210,8 +222,7 @@ def _toml_value(value: Any) -> str:
     if isinstance(value, float):
         return repr(value)
     if isinstance(value, str):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
     raise ConfigError(f"Unsupported config value type: {type(value).__name__}")

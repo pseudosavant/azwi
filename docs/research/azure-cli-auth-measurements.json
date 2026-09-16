@@ -1,0 +1,264 @@
+{
+  "platform": "win32",
+  "python": "3.13.3",
+  "azure_cli": "2.80.0",
+  "credential_source": "file",
+  "records": [
+    {
+      "name": "azure_cli_version",
+      "seconds": 1.007053,
+      "exit_code": 0
+    },
+    {
+      "name": "azwi_help_subprocess",
+      "seconds": 0.607,
+      "exit_code": 0
+    },
+    {
+      "name": "azure_account_show",
+      "seconds": 1.916188,
+      "exit_code": 0
+    },
+    {
+      "name": "azwi_help_subprocess",
+      "seconds": 0.575768,
+      "exit_code": 0
+    },
+    {
+      "name": "azure_account_show",
+      "seconds": 1.901933,
+      "exit_code": 0
+    },
+    {
+      "name": "azwi_help_subprocess",
+      "seconds": 0.591492,
+      "exit_code": 0
+    },
+    {
+      "name": "azure_account_show",
+      "seconds": 1.868218,
+      "exit_code": 0
+    },
+    {
+      "name": "azwi_help_subprocess",
+      "seconds": 0.592755,
+      "exit_code": 0
+    },
+    {
+      "name": "azure_account_show",
+      "seconds": 1.799235,
+      "exit_code": 0
+    },
+    {
+      "name": "azwi_help_subprocess",
+      "seconds": 0.563152,
+      "exit_code": 0
+    },
+    {
+      "name": "azure_account_show",
+      "seconds": 1.838295,
+      "exit_code": 0
+    },
+    {
+      "name": "resolve_existing_credential_100_times",
+      "seconds": 0.032555,
+      "iterations": 100,
+      "ok": true
+    },
+    {
+      "name": "entra_acquisition_first",
+      "seconds": 2.129725,
+      "exit_code": 0
+    },
+    {
+      "name": "entra_acquisition_repeated",
+      "seconds": 1.889936,
+      "exit_code": 0,
+      "same_token_as_first": true
+    },
+    {
+      "name": "entra_acquisition_repeated",
+      "seconds": 1.879795,
+      "exit_code": 0,
+      "same_token_as_first": true
+    },
+    {
+      "name": "entra_acquisition_repeated",
+      "seconds": 1.949383,
+      "exit_code": 0,
+      "same_token_as_first": true
+    },
+    {
+      "name": "entra_acquisition_repeated",
+      "seconds": 1.959764,
+      "exit_code": 0,
+      "same_token_as_first": true
+    },
+    {
+      "name": "entra_acquisition_repeated",
+      "seconds": 1.918994,
+      "exit_code": 0,
+      "same_token_as_first": true
+    },
+    {
+      "name": "entra_metadata",
+      "scope": "user_impersonation",
+      "remaining_seconds": 4759,
+      "expected_audience": true
+    },
+    {
+      "name": "pat_lifecycle_list_with_entra",
+      "seconds": 0.347137,
+      "ok": true,
+      "expected_schema": true
+    },
+    {
+      "name": "discover_work_item_read_only",
+      "seconds": 0.402474,
+      "ok": true,
+      "found_work_item": true
+    },
+    {
+      "name": "pat_full_fetch",
+      "seconds": 0.708092,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "entra_full_fetch_token_already_acquired",
+      "seconds": 0.978765,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "entra_full_fetch_token_already_acquired",
+      "seconds": 0.885334,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "pat_full_fetch",
+      "seconds": 0.732788,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "pat_full_fetch",
+      "seconds": 0.999188,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "entra_full_fetch_token_already_acquired",
+      "seconds": 0.833259,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "entra_full_fetch_token_already_acquired",
+      "seconds": 1.597789,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "pat_full_fetch",
+      "seconds": 0.934293,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "pat_full_fetch",
+      "seconds": 1.528964,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    },
+    {
+      "name": "entra_full_fetch_token_already_acquired",
+      "seconds": 0.588712,
+      "exit_code": 0,
+      "linked_pr_count": 1,
+      "stderr_empty": true
+    }
+  ],
+  "summary": {
+    "azure_account_show": {
+      "samples": 5,
+      "median_seconds": 1.868218,
+      "min_seconds": 1.799235,
+      "max_seconds": 1.916188,
+      "successful_samples": 5
+    },
+    "azure_cli_version": {
+      "samples": 1,
+      "median_seconds": 1.007053,
+      "min_seconds": 1.007053,
+      "max_seconds": 1.007053,
+      "successful_samples": 1
+    },
+    "azwi_help_subprocess": {
+      "samples": 5,
+      "median_seconds": 0.591492,
+      "min_seconds": 0.563152,
+      "max_seconds": 0.607,
+      "successful_samples": 5
+    },
+    "discover_work_item_read_only": {
+      "samples": 1,
+      "median_seconds": 0.402474,
+      "min_seconds": 0.402474,
+      "max_seconds": 0.402474,
+      "successful_samples": 1
+    },
+    "entra_acquisition_first": {
+      "samples": 1,
+      "median_seconds": 2.129725,
+      "min_seconds": 2.129725,
+      "max_seconds": 2.129725,
+      "successful_samples": 1
+    },
+    "entra_acquisition_repeated": {
+      "samples": 5,
+      "median_seconds": 1.918994,
+      "min_seconds": 1.879795,
+      "max_seconds": 1.959764,
+      "successful_samples": 5
+    },
+    "entra_full_fetch_token_already_acquired": {
+      "samples": 5,
+      "median_seconds": 0.885334,
+      "min_seconds": 0.588712,
+      "max_seconds": 1.597789,
+      "successful_samples": 5
+    },
+    "pat_full_fetch": {
+      "samples": 5,
+      "median_seconds": 0.934293,
+      "min_seconds": 0.708092,
+      "max_seconds": 1.528964,
+      "successful_samples": 5
+    },
+    "pat_lifecycle_list_with_entra": {
+      "samples": 1,
+      "median_seconds": 0.347137,
+      "min_seconds": 0.347137,
+      "max_seconds": 0.347137,
+      "successful_samples": 1
+    },
+    "resolve_existing_credential_100_times": {
+      "samples": 1,
+      "median_seconds": 0.032555,
+      "min_seconds": 0.032555,
+      "max_seconds": 0.032555,
+      "successful_samples": 1
+    }
+  }
+}

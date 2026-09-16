@@ -17,6 +17,22 @@ class AuthError(AzwiError):
     exit_code = 4
 
 
+class LoginRequired(AuthError):
+    pass
+
+
+class AzureCLIUnavailable(AuthError):
+    pass
+
+
+class MissingCredential(AuthError):
+    pass
+
+
+class ChooseAuthentication(AuthError):
+    pass
+
+
 class NotFoundError(AzwiError):
     exit_code = 5
 
