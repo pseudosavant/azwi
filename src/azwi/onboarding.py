@@ -16,7 +16,7 @@ from azwi.auth_flow import Authentication, METHODS, auth_settings
 from azwi.azure_cli import choose, interactive_terminal, tenant_id
 from azwi.config import default_config_path, load_config, resolve_config, save_config, set_defaults
 from azwi.errors import AuthError, AzureCLIUnavailable, AzwiError, ChooseAuthentication, ConfigError, UsageError
-from azwi.skill import install_skill, skill_status
+from azwi.skill import SKILLS_DIR_HELP, install_skill, skill_status
 
 
 def read_masked_pat(stdin, stderr) -> str:
@@ -118,14 +118,18 @@ def check(namespace, *, stdout, stderr, env, config_path, verify) -> int:
         credential = Credential(None, "unavailable")
         issues.append(str(exc))
         code = code or 4
-    try:
-        skill = skill_status(namespace.skills_dir)
-        skill_ready = skill["installed"] and skill["managed"]
-    except AzwiError:
-        skill = {"installed": False, "managed": False}
-        skill_ready = False
-    if not skill_ready:
-        issues.append("Managed agent skill is missing or unreadable. Run uvx azwi skill install.")
+    target_option = " with the same --skills-dir argument" if namespace.skills_dir is not None else ""
+    skill = skill_status(namespace.skills_dir, env=env, report_errors=True)
+    for location in skill.get("locations", [skill]):
+        if location.get("error"):
+            issue = f"{location['error']} Correct the reported problem and rerun uvx azwi config check{target_option}."
+        elif location["installed"] and location["managed"]:
+            continue
+        elif location["installed"]:
+            issue = f"Move the unmanaged skill at '{location['path']}' before running uvx azwi skill install{target_option}."
+        else:
+            issue = f"The managed skill is missing at '{location['path']}'. Run uvx azwi skill install{target_option}."
+        issues.append(issue)
         code = code or 3
     verification = {"status": "not_checked"}
     if org and credential.source not in ("missing", "unavailable") and item_id:
@@ -154,7 +158,7 @@ def setup(argv, *, stdout, stderr, stdin, env, config_path, verify, program, fal
     parser = argparse.ArgumentParser(prog=f"{program} setup", description="Configure authentication, verify access, and install $azure-workitem.")
     parser.add_argument("url", nargs="?", help="Azure DevOps Cloud work item URL")
     parser.add_argument("--org", help="organization name instead of a work item URL")
-    parser.add_argument("--skills-dir", type=Path, help="skills root (default: ~/.agents/skills)")
+    parser.add_argument("--skills-dir", type=Path, help=SKILLS_DIR_HELP)
     parser.add_argument("--format", choices=["json", "plain"], default="json", help="result format (default: json)")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt or launch Microsoft sign-in")
     parser.add_argument("--replace-pat", action="store_true", help="prompt for a replacement saved PAT (unset AZWI_PAT first)")
@@ -267,7 +271,7 @@ def setup(argv, *, stdout, stderr, stdin, env, config_path, verify, program, fal
             raw.setdefault("orgs", {}).setdefault(org, {})["auth"] = {"method": method}
     save_config(set_defaults(raw, org=org), path)
     try:
-        skill = install_skill(namespace.skills_dir)
+        skill = install_skill(namespace.skills_dir, env=env)
     except AzwiError as exc:
         raise UsageError(f"Organization saved to {path}. Skill installation failed: {exc}") from None
     report = {
@@ -374,7 +378,7 @@ def setup_azure(namespace, method, flow, org, item_id, raw, path, *, interactive
                 if previous.get("managed") and previous.get("identity") == identity:
                     flow.cleanup(service, previous["authorization_id"])
     try:
-        skill = install_skill(namespace.skills_dir)
+        skill = install_skill(namespace.skills_dir, env=flow.env)
     except AzwiError as exc:
         raise UsageError(f"Organization and authentication saved. Skill installation failed: {exc}") from None
     write_report({"ready": True, "org": org, "config_path": str(path), "auth_method": method,

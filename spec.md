@@ -365,10 +365,10 @@ uvx azwi config check "https://dev.azure.com/contoso/Payments/_workitems/edit/21
 4. Reuse an environment override or already configured method. Otherwise interactive setup offers managed PAT (default), Entra, manual PAT, environment variable, and cancellation. `--auth {managed-pat,entra,manual-pat,environment}` selects explicitly. Azure CLI options are `--tenant`, `--login-method`, `--pat-lifetime-days`, and `--renew-before-days`. Reject incompatible flags before making changes. A non-empty AZWI_PAT must be unset before configuring another method. Repeated managed setup reuses a healthy PAT.
 5. Manual setup prompts for a masked PAT when needed. Explain the plain-text file and inherited permissions before prompting. PAT guidance includes Work Items: Read and Code: Read, a creation link, and expiration guidance appropriate to organization policy. `--replace-pat` prompts for a manually supplied replacement. It requires an interactive terminal and an unset AZWI_PAT. There is no command-line PAT value argument. `--non-interactive` never prompts. Empty organization or PAT input cancels. Empty menu input accepts the displayed default.
 6. A supplied URL is verified using the normal default fetch, including comments and linked PR metadata, before saving the organization or an entered PAT. No downloads or PR thread comments are enabled. A failure prevents these setup mutations.
-7. Setup saves the organization through the existing config functions and installs the managed skill by default. `--skills-dir DIR` overrides its root. Existing skill content protections apply. No `--install-skill` flag is needed.
+7. Setup saves the organization through the existing config functions and installs the managed skill in each default skills directory. `--skills-dir DIR` selects a single directory. Existing skill content protections apply to every copy.
 8. When no method is configured or selected and no PAT is available, non-interactive setup still saves the organization and installs the skill, then returns exit code 4 with `ready: false`, an interactive setup command, and PowerShell and Bash AZWI_PAT instructions. Manual PAT storage failures produce incomplete readiness and environment fallback guidance. A selected Azure CLI method that requires sign-in fails without prompting or completing setup. New managed PAT candidates must be cleaned up on verification or storage failure. Skill installation failures identify settings that were already saved.
 9. Setup and config check return deterministic JSON reports by default. Both accept `--format plain`. Prompts and diagnostics go to stderr. Reports never include a PAT.
-10. `config check [URL] [--org ORG]` bypasses automatic skill synchronization. It checks the organization, resolved credential availability, and managed skill presence. It reports authentication method, credential source, known expiry, and credentials file path without exposing values. Sources include `environment`, `file`, `managed-pat`, `azure-cli`, `missing`, and `unavailable`. It accepts `--skills-dir DIR` and reports missing prerequisites with repair commands. Expired managed PATs are not ready.
+10. `config check [URL] [--org ORG]` bypasses automatic skill synchronization. It checks the organization and resolved credential availability. Skill readiness requires a managed copy in every selected skills directory. It reports authentication method, credential source, known expiry, and credentials file path without exposing values. Sources include `environment`, `file`, `managed-pat`, `azure-cli`, `missing`, and `unavailable`. It accepts `--skills-dir DIR` and reports missing prerequisites with repair commands. Expired managed PATs are not ready.
 11. Config check with a URL performs the normal fetch without saving the URL's organization. It may silently acquire an Entra token but never launches sign-in or renews a PAT. Checks do not modify azwi files. Azure CLI may update its own cache. Without a URL, check reports local readiness with verification `not_checked` and never starts Azure CLI. A returned linked PR establishes Code access for that resource. Otherwise Code access is `not_verified`. Azure CLI setup without a URL verifies organization access through connectionData and reports `organization_verified`.
 12. Missing organization or skill readiness uses exit code 3. Missing authentication uses exit code 4 unless an organization error already takes precedence. Verification failures use the existing fetch error code. Successful checks use exit code 0.
 13. Setup and checks report credential availability only in their current execution environment. Sandboxed, remote, and desktop execution may have different home directories, file access, and environments. Run config check within the agent execution context to test its access.
@@ -386,7 +386,7 @@ https://github.com/pseudosavant/azwi
 
 ## Managed agent skill
 
-`azwi` manages an agent-neutral `$azure-workitem` skill:
+`azwi` manages the same `azure-workitem` skill for Codex and Claude Code.
 
 ```text
 uvx azwi skill install
@@ -396,13 +396,13 @@ uvx azwi skill remove
 
 Requirements:
 
-1. The default skill path is `~/.agents/skills/azure-workitem/SKILL.md`.
-2. All skill commands accept `--skills-dir DIR` to override the skills root. Custom locations require explicit updates.
+1. The primary skills directory is `~/.agents/skills`. When the active Claude Code profile directory exists, also select its `skills` subdirectory. Setup and explicit installation create that subdirectory if needed. The profile defaults to `~/.claude`. A nonempty `CLAUDE_CONFIG_DIR` selects another profile and must be absolute for detection to work. Process a shared directory once. In each directory the skill path is `azure-workitem/SKILL.md`.
+2. All skill commands accept `--skills-dir DIR` to select only that directory. An explicit install can create the selected directory. Locations outside the defaults require explicit updates.
 3. `skill install` creates a missing skill or updates a pristine older managed skill. Installing the canonical skill again is a no-op. Unmanaged content is never overwritten.
 4. `skill remove` removes only `SKILL.md` and its directory if empty. Unrelated files are preserved.
 5. Removal refuses unmanaged content unless `--force` is provided. Installation and removal refuse linked paths and unexpected file types.
-6. Skill commands write deterministic JSON result objects to stdout and diagnostics to stderr only. `skill status --format plain` also supports plain output. `install-skill`, `remove-skill`, and `skill-status` are aliases.
-7. `$azure-workitem <id>` calls `uvx azwi <id> --non-interactive` and parses the default JSON output.
+6. Skill commands write deterministic JSON result objects to stdout and diagnostics to stderr only. When two directories are selected, existing fields describe the primary result and a `locations` array contains both results, primary first and Claude Code second. Setup and config check use the same convention within their `skill` object. A single directory retains the existing result shape. `skill status --format plain` also supports plain output. `install-skill`, `remove-skill`, and `skill-status` are aliases.
+7. Invoke `$azure-workitem <id>` in Codex or `/azure-workitem <id>` in Claude Code. The skill calls `uvx azwi <id> --non-interactive` and parses the default JSON output.
 8. For supported Azure DevOps Cloud work item URLs, the skill extracts the ID and organization and calls `uvx azwi <id> --org <org> --non-interactive`. Every skill fetch or fields command must use this flag. Sign-in repair belongs in the user's terminal.
 9. URL parsing for fetch requests belongs to the skill. Setup and config check also accept URLs. The public fetch CLI remains `azwi <work_item_id> [options]`.
 10. The skill keeps attachment downloads, image downloads, and PR thread comments opt-in, matching the CLI behavior.
@@ -415,13 +415,13 @@ The canonical skill is generated from one bundled template. Its UTF-8 text has n
 ```yaml
 metadata:
   managed-by: azwi
-  managed-version: "1.4.0"
+  managed-version: "1.5.0"
   managed-content-sha256: "sha256:<64 lowercase hexadecimal characters>"
 ```
 
 The example hash is schematic. Generation hashes the complete text with the hash field set to `""`, after normalizing line endings to LF and encoding as UTF-8. Verification uses the installed file's own stored hash. Replace only the parsed hash scalar's value in memory. Do not reserialize YAML or compare against the current bundled hash. This detects modifications to body text, front matter, and formatting. It is not a signature or security boundary. Preserve any unrelated supported metadata used by the template. Do not add a top-level version or sidecar files.
 
-Automatic checks run before normal commands, including no-argument help, fetch, fields, config updates and show, help, version, and about output. Skill-management commands, setup, and config check skip automatic checks. Inspect only `~/.agents/skills/azure-workitem/SKILL.md`:
+Automatic checks run before normal commands, including no-argument help, fetch, fields, config updates and show, help, version, and about output. Skill-management commands, setup, and config check skip automatic checks. Apply the following rules independently to each default location.
 
 1. An absent or unmanaged skill is left alone. Never create a missing skill automatically.
 2. A skill is managed when parsed `metadata.managed-by` equals `azwi`. The legacy `<!-- managed-by: azwi -->` marker is also recognized when no conflicting owner is present. New skills omit the legacy marker.
@@ -988,7 +988,7 @@ The implementation is done when all of the following are true:
 24. Attachment selectors are exact-match repeatable filters: `--attachment-name NAME` and `--attachment-url URL`.
 25. Root and fetch help show `https://github.com/pseudosavant/azwi` and the MIT license.
 26. `--about` prints the package version, summary, project URL, and license.
-27. `skill install`, `skill status`, and `skill remove` manage `$azure-workitem` under `~/.agents/skills` by default. Existing command aliases remain supported.
+27. `skill install`, `skill status`, and `skill remove` manage `azure-workitem` under `~/.agents/skills` and any detected personal Claude Code skills directory. Existing command aliases remain supported.
 28. Skill installation protects unmanaged and modified content. Force installation can replace modified managed content. Removal requires managed metadata or a legacy marker unless forced.
 29. `$azure-workitem` accepts numeric IDs and supported Azure DevOps Cloud URLs while the public `azwi` fetch command remains ID-only.
 30. The skill preserves the CLI's opt-in behavior for downloads and PR thread comments.

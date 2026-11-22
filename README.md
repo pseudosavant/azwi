@@ -13,7 +13,7 @@ The CLI is designed for both people and agents. Successful output stays on stdou
 1. Install `uv` using the link above.
 2. For automatic authentication, install [Azure CLI](https://aka.ms/installazurecli) if it is not already available. A manually supplied PAT also works without Azure CLI.
 3. Run setup using the PowerShell or Bash commands below and choose an authentication method. Replace the example URL with a work item you can access.
-4. Use `$azure-workitem` in your agent.
+4. Invoke `$azure-workitem` in Codex or `/azure-workitem` in Claude Code.
 
 PowerShell:
 
@@ -40,9 +40,11 @@ PATs are saved in `~/.azwi/credentials.toml`, separately from non-secret setting
 
 Bare `uvx azwi setup` asks for a work item URL or organization name. You can also use `uvx azwi setup --org my-org`. Azure CLI methods verify organization access even without a work item URL. A URL additionally verifies comments and linked PR metadata through the normal fetch. No project default is required.
 
-Then use `$azure-workitem` in Codex, Claude Code, or another agent harness that supports skills:
+In Codex, you can ask for a work item by ID.
 
 > Use $azure-workitem to inspect 2195. Summarize the requested change, acceptance criteria, and any relevant pull request discussion.
+
+In Claude Code, type `/azure-workitem 2195`.
 
 The skill accepts numeric IDs and supported Azure DevOps Cloud URLs. It requests PR comments and downloads only when needed. Start a new agent session if the installed skill is not yet available.
 
@@ -85,7 +87,7 @@ uvx azwi setup "https://dev.azure.com/my-org/Payments/_workitems/edit/2195" --au
 
 Use `--auth entra` instead for temporary Azure CLI tokens. Use `--auth manual-pat` to return to a manually managed PAT, or `--auth environment` to require `AZWI_PAT` for that organization. These choices are saved per organization. They do not change other organizations' authentication methods. Supplying a work item URL verifies the selected method before completing setup.
 
-After upgrading, start a new agent session to pick up the updated skill's non-interactive commands. Installed releases update pristine older managed skills automatically. Local source builds and custom skill locations require an explicit skill install. See [Manage the agent skill](#manage-the-agent-skill).
+After upgrading, start a new agent session to pick up the updated skill's non-interactive commands. Installed releases update pristine older managed copies in the detected locations automatically. Local source builds and skills installed outside those locations require an explicit skill install. See [Manage the agent skill](#manage-the-agent-skill).
 
 ### Credentials and environment overrides
 
@@ -139,7 +141,9 @@ uvx azwi config check "https://dev.azure.com/my-org/Payments/_workitems/edit/219
 
 For managed PAT or Entra sign-in repair, rerun `uvx azwi setup "<work-item-url>"` in your terminal. If a manually supplied PAT expires or is rejected, add `--replace-pat`. Setup verifies a replacement before saving it. If you use `AZWI_PAT`, update its value in the execution environment instead. Unset it before using `--replace-pat`. Make sure the token applies to the selected organization and has both required scopes. Rejected credentials never cause a silent switch to another authentication method.
 
-Setup and checks return JSON by default. Add `--format plain` for a compact text report. Setup installs the skill by default and respects existing managed-skill protections. Use `--skills-dir DIR` with either command for a custom skill root. `setup --non-interactive` can use a saved PAT, `AZWI_PAT`, or a usable Azure CLI session for an explicitly selected or already configured Azure CLI method. It never prompts or launches sign-in. Without a configured method or PAT, it saves the organization and installs the skill, then returns exit code 4 with `ready: false` and repair instructions. A failure to save an entered PAT also returns incomplete readiness and environment-variable instructions. Sandboxed and remote agents need access to the credentials or Azure CLI session in their own execution environment.
+Setup and checks return JSON by default. Add `--format plain` for a compact text report. Setup installs the skill in each selected directory. Readiness requires a managed copy in each one. Use `--skills-dir DIR` with either command to select a single directory.
+
+`setup --non-interactive` can use a saved PAT, `AZWI_PAT`, or a usable Azure CLI session for an explicitly selected or already configured Azure CLI method. It never prompts or launches sign-in. Without a configured method or PAT, it saves the organization and installs the skill, then returns exit code 4 with `ready: false` and repair instructions. A failure to save an entered PAT also returns incomplete readiness and environment-variable instructions. Sandboxed and remote agents need access to the credentials or Azure CLI session in their own execution environment.
 
 ## What it returns
 
@@ -382,7 +386,7 @@ Azure DevOps system comments are excluded unless `--include-pr-system-comments` 
 
 ## Manage the agent skill
 
-The standard skill location is `~/.agents/skills/azure-workitem/SKILL.md`.
+`setup` and `skill install` install `azure-workitem/SKILL.md` under `~/.agents/skills`. When the Claude Code profile directory exists, they also install the skill under its `skills` subdirectory and create that subdirectory if needed. The profile defaults to `~/.claude`. An absolute `CLAUDE_CONFIG_DIR` selects a different profile. A shared directory is handled once.
 
 ```powershell
 uvx azwi skill install
@@ -391,7 +395,9 @@ uvx azwi skill status --format plain
 uvx azwi skill remove
 ```
 
-Skill commands return JSON by default. All three commands accept `--skills-dir DIR` for a custom skills root. The older `install-skill`, `skill-status`, and `remove-skill` command aliases remain available.
+`skill status` and `skill remove` use the same directories. All three skill commands accept `--skills-dir DIR` to select one directory exclusively.
+
+Skill commands return JSON by default. When both directories are selected, the existing fields describe the primary copy under `~/.agents/skills`. The `locations` array contains both results in order, with Claude Code second. Setup and config check report the locations under `skill`. The older `install-skill`, `skill-status`, and `remove-skill` command aliases remain available.
 
 Normal invocations of an installed release automatically update an older managed skill when its installed content is unchanged. Synchronization is local. It does not query PyPI, refresh uv's cache, or update the CLI. Missing skills, unmanaged skills, modified managed skills, equal versions, and newer versions are left alone.
 
@@ -404,7 +410,7 @@ uvx azwi skill install --force
 
 Install-time `--force` can replace altered content only when the skill is managed by `azwi`. It never overwrites an unmanaged skill or downgrades a newer version.
 
-Automatic synchronization checks only the standard location. Local checkouts, direct source installs, editable builds, and custom locations require explicit skill commands. Updates affect future agent sessions and may not change instructions already loaded by a running agent.
+Automatic synchronization checks existing copies under `~/.agents/skills` and the detected Claude Code skills directory. To add a copy after Claude Code creates its profile directory, rerun `uvx azwi skill install`. Local checkouts, direct source installs, editable builds, and directories outside these locations require explicit skill commands. Updates affect future agent sessions and may not change instructions already loaded by a running agent.
 
 `skill remove` removes the managed `SKILL.md` and its directory when empty. It preserves unrelated files. Removing unmanaged content requires `--force`. Installation and removal refuse linked paths and unexpected file types.
 
@@ -431,6 +437,7 @@ Environment variables:
 | `AZWI_PAT` | Overrides every saved authentication method. Otherwise use the selected organization's configured method, with manual PAT lookup as the legacy default |
 | `AZWI_ORG` | Default organization for fetch and fields |
 | `AZWI_PROJECT` | Default project for project-scoped commands such as `fields` |
+| `CLAUDE_CONFIG_DIR` | Absolute path to an existing Claude Code profile directory |
 
 Exit codes:
 
@@ -467,14 +474,14 @@ Run the tests and build the distribution:
 ```powershell
 uv run python -m unittest discover -s tests -v
 uv build --no-sources
-uv run python tests/wheel_smoke.py dist/azwi-1.4.0-py3-none-any.whl
+uv run python tests/wheel_smoke.py dist/azwi-1.5.0-py3-none-any.whl
 ```
 
 The wheel smoke check uses temporary environments and a temporary home directory. It validates wheel packaging, index-style metadata, local and editable installs, `uvx`, and the PEP 723 wrapper. It requires access to build and runtime dependencies.
 
 To release a version:
 
-1. Update the version and changelog, then commit and tag the release, such as `v1.4.0`.
+1. Update the version and changelog, then commit and tag the release, such as `v1.5.0`.
 2. Push the commit and tag. The tag triggers GitHub Actions to build and publish to PyPI using Trusted Publishing.
 3. Verify the workflow succeeds and create the GitHub release for that tag.
 

@@ -12,7 +12,7 @@ from azwi.cli import run_cli
 from azwi.config import load_config
 from azwi.errors import AuthError, UsageError
 from azwi.onboarding import parse_work_item_url
-from tests.test_cli import FakeClient
+from tests.test_cli import FakeClient, isolated_home
 
 
 URL = "https://dev.azure.com/contoso/Payments/_workitems/edit/2195"
@@ -29,6 +29,7 @@ class OnboardingTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        self.enterContext(isolated_home(self.root))
         self.config = self.root / "config.toml"
         self.skills = self.root / "skills"
         patcher = patch("azwi.cli.sync_skill")
@@ -77,6 +78,57 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("Paste a work item URL", err)
         self.assertEqual(json.loads(out)["org"], "contoso")
+
+    def test_setup_creates_skills_directory_in_existing_claude_profile(self):
+        profile = self.root / "work profile"
+        claude_skills = profile / "skills"
+        profile.mkdir()
+        env = {"AZWI_PAT": TOKEN, "CLAUDE_CONFIG_DIR": str(profile)}
+        code, out, err = self.run_command(["config", "check", "--org", "contoso"], env)
+        self.assertEqual(code, 3, err)
+        self.assertEqual([item["installed"] for item in json.loads(out)["skill"]["locations"]], [False, False])
+        self.assertFalse(claude_skills.exists())
+
+        code, out, err = self.run_command(["setup", "--org", "contoso", "--non-interactive"], env)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err, "")
+        relative = Path("azure-workitem") / "SKILL.md"
+        paths = [self.root / ".agents" / "skills" / relative, claude_skills / relative]
+        self.assertEqual([item["path"] for item in json.loads(out)["skill"]["locations"]], list(map(str, paths)))
+        self.assertEqual(paths[0].read_bytes(), paths[1].read_bytes())
+        self.assertEqual(self.run_command(["config", "check"], env)[0], 0)
+
+        paths[1].unlink()
+        code, out, err = self.run_command(["config", "check"], env)
+        self.assertEqual(code, 3, err)
+        report = json.loads(out)
+        self.assertFalse(report["ready"])
+        self.assertEqual([item["installed"] for item in report["skill"]["locations"]], [True, False])
+        self.assertFalse(paths[1].exists())
+        self.sync.assert_not_called()
+
+    def test_readiness_preserves_primary_status_when_claude_yaml_is_invalid(self):
+        claude_skills = self.root / ".claude" / "skills"
+        claude_skills.mkdir(parents=True)
+        env = {"AZWI_PAT": TOKEN}
+        code, _, err = self.run_command(["setup", "--org", "contoso", "--non-interactive"], env)
+        self.assertEqual(code, 0, err)
+        damaged = claude_skills / "azure-workitem" / "SKILL.md"
+        malformed = f"---\nmetadata:\n\t{TOKEN}\n---\n"
+        damaged.write_text(malformed, encoding="utf-8")
+
+        code, out, err = self.run_command(["config", "check"], env)
+        self.assertEqual(code, 3, err)
+        report = json.loads(out)
+        self.assertFalse(report["ready"])
+        self.assertTrue(report["skill"]["installed"])
+        primary, claude = report["skill"]["locations"]
+        self.assertTrue(primary["managed"])
+        self.assertEqual(claude["path"], str(damaged))
+        self.assertIn(str(damaged), claude["error"])
+        self.assertIn(claude["error"], err)
+        self.assertIn("uvx azwi config check", report["next_steps"][0])
+        self.assertEqual(damaged.read_text(encoding="utf-8"), malformed)
 
     def test_missing_pat_completes_local_setup_with_actionable_error(self):
         env = {}

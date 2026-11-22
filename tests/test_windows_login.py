@@ -91,8 +91,7 @@ class WindowsLoginTests(unittest.TestCase):
                        str(Path(__file__).resolve().parents[1] / "src"), str(root)]
             if powershell:
                 script = "& " + " ".join("'" + arg.replace("'", "''") + "'" for arg in command)
-                (root / "launch.ps1").write_text(script + "\nexit $LASTEXITCODE\n")
-                command = [shutil.which("pwsh"), "-NoProfile", "-File", str(root / "launch.ps1")]
+                command = [shutil.which("pwsh"), "-NoProfile", "-Command", script]
             with (root / "output.txt").open("w+") as output:
                 process = subprocess.Popen(
                     command,
@@ -128,7 +127,8 @@ class WindowsLoginTests(unittest.TestCase):
                     if force_exit:
                         self.assertNotEqual(code, 0)
                     else:
-                        self.assertEqual(code, 4, message)
+                        # pwsh -Command reports exit code 1 when Ctrl+C interrupts it.
+                        self.assertEqual(code, 1 if powershell else 4, message)
                         self.assertIn("cancelled", message)
                     self.assertNotIn("Traceback", message)
                 finally:

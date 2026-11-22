@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0 (2026-11-21)
+
+- Install `azure-workitem` in an existing Claude Code profile alongside `~/.agents/skills`. Setup and explicit installation create the profile's `skills` directory if needed and honor an absolute `CLAUDE_CONFIG_DIR`.
+- Check, update, and remove managed copies across both locations. Ordinary runs update eligible installed copies. First-time installation requires setup or an explicit install.
+- Report both copies in a `locations` array when two directories are selected. Readiness checks identify missing, unmanaged, or unreadable copies by path. Use `--skills-dir` to select a single directory.
+- Document the Claude Code skill invocation and test installation, reporting, and updates across both locations.
+- Update the PowerShell Ctrl+C test to check the launcher exit code and verify Azure CLI process cleanup.
+
 ## 1.4.0 (2026-09-16)
 
 - Add organization-specific managed PAT and temporary Microsoft Entra authentication through Azure CLI. Preserve manual PATs and the AZWI_PAT override.

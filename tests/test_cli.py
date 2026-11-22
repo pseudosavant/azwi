@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -20,6 +21,13 @@ if str(SRC) not in sys.path:
 from azwi import __version__
 from azwi.cli import run_cli
 from azwi.client import AzureDevOpsClient
+
+
+@contextlib.contextmanager
+def isolated_home(home: Path):
+    with patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        yield
 
 
 @contextlib.contextmanager
@@ -163,9 +171,7 @@ class CliTests(unittest.TestCase):
         FakeClient.instances.clear()
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        skills = patch("azwi.skill.default_skills_dir", return_value=Path(temporary.name) / "skills")
-        skills.start()
-        self.addCleanup(skills.stop)
+        self.enterContext(isolated_home(Path(temporary.name)))
 
     def test_root_help_and_fetch_help_match_contract(self) -> None:
         stdout = io.StringIO()

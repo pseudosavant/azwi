@@ -38,7 +38,7 @@ from azwi.render import (
     render_json,
     render_markdown,
 )
-from azwi.skill import install_skill, remove_skill, skill_status, sync_skill
+from azwi.skill import SKILLS_DIR_HELP, install_skill, remove_skill, skill_status, sync_skill
 
 
 PROJECT_URL = "https://github.com/pseudosavant/azwi"
@@ -108,7 +108,7 @@ def run_cli(
     args = list(argv)
     try:
         if args and args[0] in {"skill", "install-skill", "remove-skill", "skill-status"}:
-            return _run_skill(args, stdout=stdout, program=program)
+            return _run_skill(args, stdout=stdout, env=env, program=program)
         def verify(org, item_id, pat):
             if item_id is None:
                 value = pat.client_value() if isinstance(pat, Credential) else pat
@@ -139,7 +139,7 @@ def run_cli(
                 namespace, stdout=stdout, stderr=stderr, env=env,
                 config_path=config_path, verify=verify,
             )
-        sync_skill(stderr=stderr)
+        sync_skill(stderr=stderr, env=env)
         if not args or args[0] in {"-h", "--help"}:
             stdout.write(build_root_help(program))
             return 0
@@ -229,8 +229,10 @@ def build_root_help(program: str) -> str:
         f"  metadata, description, acceptance, comments, attachments, prs\n\n"
         f"Config:\n"
         f"  ~/.azwi/config.toml stores non-secret defaults and field mappings.\n\n"
-        f"Skill updates:\n"
-        f"  Installed releases synchronize pristine older managed skills in ~/.agents/skills.\n"
+        f"Skills:\n"
+        f"  Setup and skill install add a copy under ~/.agents/skills and inside an existing\n"
+        f"  Claude profile (~/.claude or CLAUDE_CONFIG_DIR).\n"
+        f"  Ordinary runs of installed releases update existing pristine older copies.\n"
         f"  Local builds and custom locations require explicit skill commands.\n"
         f"  To replace modified managed content: uvx azwi skill install --force\n\n"
         f"Exit codes:\n"
@@ -329,7 +331,7 @@ def _write_json_payload(payload: object, stdout: object) -> None:
 
 
 def _skill_arguments(parser: argparse.ArgumentParser, command: str) -> None:
-    parser.add_argument("--skills-dir", type=Path, help="skills root (default: ~/.agents/skills)")
+    parser.add_argument("--skills-dir", type=Path, help=SKILLS_DIR_HELP)
     if command == "install":
         parser.add_argument("--force", action="store_true", help="replace altered managed content. Never overwrite unmanaged content")
     elif command == "remove":
@@ -338,7 +340,7 @@ def _skill_arguments(parser: argparse.ArgumentParser, command: str) -> None:
         parser.add_argument("--format", choices=["json", "plain"], default="json", help="output format (default: json)")
 
 
-def _run_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
+def _run_skill(argv: Sequence[str], *, stdout: object, env: Mapping[str, str], program: str) -> int:
     descriptions = {
         "install": "Install or update $azure-workitem. Preserve altered content unless --force is used.",
         "remove": "Remove $azure-workitem SKILL.md. Preserve unrelated files.",
@@ -358,15 +360,18 @@ def _run_skill(argv: Sequence[str], *, stdout: object, program: str) -> int:
             _skill_arguments(child, command)
     namespace = parser.parse_args(list(argv[1:]))
     if namespace.skill_command == "install":
-        payload = install_skill(namespace.skills_dir, force=namespace.force)
+        payload = install_skill(namespace.skills_dir, force=namespace.force, env=env)
     elif namespace.skill_command == "remove":
-        payload = remove_skill(namespace.skills_dir, force=namespace.force)
+        payload = remove_skill(namespace.skills_dir, force=namespace.force, env=env)
     else:
-        payload = skill_status(namespace.skills_dir)
+        payload = skill_status(namespace.skills_dir, env=env)
         if namespace.format == "plain":
-            for key, value in payload.items():
-                rendered = json.dumps(value) if value is None or isinstance(value, bool) else str(value)
-                stdout.write(f"{key}: {rendered}\n")
+            for index, location in enumerate(payload.get("locations", [payload])):
+                if index:
+                    stdout.write("\n")
+                for key, value in location.items():
+                    rendered = json.dumps(value) if value is None or isinstance(value, bool) else str(value)
+                    stdout.write(f"{key}: {rendered}\n")
             return 0
     _write_json_payload(payload, stdout)
     return 0
@@ -732,7 +737,7 @@ def _build_config_parser(program: str) -> argparse.ArgumentParser:
     check = subparsers.add_parser("check", help="check access and skill readiness without changing files")
     check.add_argument("url", nargs="?", help="work item URL to verify with a full default fetch")
     check.add_argument("--org", help="organization override")
-    check.add_argument("--skills-dir", type=Path, help="skills root (default: ~/.agents/skills)")
+    check.add_argument("--skills-dir", type=Path, help=SKILLS_DIR_HELP)
     check.add_argument("--format", choices=["json", "plain"], default="json", help="result format (default: json)")
 
     show = subparsers.add_parser("show", formatter_class=CompactHelpFormatter, help="show effective resolved config")

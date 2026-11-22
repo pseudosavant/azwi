@@ -1,4 +1,4 @@
-"""Run with: python tests/wheel_smoke.py dist/azwi-1.4.0-py3-none-any.whl."""
+"""Run with python tests/wheel_smoke.py dist/azwi-1.5.0-py3-none-any.whl."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ def main() -> None:
         home.mkdir()
         environment = dict(os.environ)
         environment.update(HOME=str(home), USERPROFILE=str(home), UV_TOOL_DIR=str(workspace / "tools"))
+        environment.pop("CLAUDE_CONFIG_DIR", None)
         environment.pop("PYTHONPATH", None)
         environment.pop("VIRTUAL_ENV", None)
         environment.pop("RUST_LOG", None)
@@ -87,10 +88,17 @@ print(skill.render_skill(), end="")
         empty = json.loads(run(python, "-m", "azwi", "skill", "status").stdout)
         assert empty["installed"] is False
         assert empty["path"] == str(path)
-        run(python, "-m", "azwi", "--version")
-        assert not path.exists()
-        run(python, "-m", "azwi", "skill", "install")
+        claude_skills = home / ".claude" / "skills"
+        claude_skills.parent.mkdir()
+        result = run("uvx", "--from", wheel, "azwi")
+        assert "azwi <work_item_id> [options]" in result.stdout
+        assert result.stderr == ""
+        assert not path.exists() and not claude_skills.exists()
+        result = run("uvx", "--from", wheel, "azwi", "skill", "install")
+        assert len(json.loads(result.stdout)["locations"]) == 2
+        assert result.stderr == ""
         canonical = path.read_bytes()
+        assert (claude_skills / "azure-workitem" / "SKILL.md").read_bytes() == canonical
         assert b"uvx azwi <id>" in canonical
         assert b"\r" not in canonical
         write_older_skill()
